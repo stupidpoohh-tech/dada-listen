@@ -9,7 +9,7 @@ export default function ConfigMissing() {
         <div className="mark"><Ic.lock /></div>
         <h2 style={{ margin: '0 0 6px', fontSize: 18 }}>설정이 필요해요</h2>
         <p style={{ color: 'var(--ink-3)', fontSize: 13, margin: '0 0 16px', lineHeight: 1.6 }}>
-          Supabase 접속 정보가 없습니다.
+          Neon 접속 정보가 없습니다.
           <br />
           <code style={{ fontSize: 12 }}>.env.example</code> 을 복사해{' '}
           <code style={{ fontSize: 12 }}>.env.local</code> 을 만들고 아래 두 값을 채우세요.
@@ -27,9 +27,9 @@ export default function ConfigMissing() {
             lineHeight: 1.9,
           }}
         >
-          VITE_SUPABASE_URL
+          VITE_NEON_AUTH_URL
           <br />
-          VITE_SUPABASE_ANON_KEY
+          VITE_NEON_DATA_API_URL
         </div>
         <p style={{ color: 'var(--ink-4)', fontSize: 11, marginTop: 14, lineHeight: 1.5 }}>
           배포 환경에서는 호스팅 대시보드의 환경변수에 같은 값을 등록하세요.

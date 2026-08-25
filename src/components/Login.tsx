@@ -5,11 +5,12 @@ import { useState } from 'react';
 import { Ic } from './icons';
 import { resetPassword, signIn } from '../lib/store';
 
-/** Supabase 의 에러 메시지를 원본 앱의 한국어 문구로 옮긴다. */
+/** 인증 제공자의 영어 에러 메시지를 원본 앱의 한국어 문구로 옮긴다. */
 function authMessage(e: unknown): string {
   const raw = e instanceof Error ? e.message : String(e);
   const m = raw.toLowerCase();
-  if (m.includes('invalid login credentials')) return '이메일 또는 비밀번호가 올바르지 않아요';
+  if (m.includes('invalid login credentials') || m.includes('invalid email or password'))
+    return '이메일 또는 비밀번호가 올바르지 않아요';
   if (m.includes('email not confirmed')) return '이메일 인증이 완료되지 않았어요';
   if (m.includes('invalid email')) return '이메일 형식이 올바르지 않아요';
   if (m.includes('missing') && m.includes('password')) return '비밀번호를 입력하세요';

@@ -16,9 +16,14 @@
 
 ## 스택
 - Vite + React 18 + TypeScript
-- Supabase (Postgres + Storage + Auth + Edge Functions, RLS로 권한 제어)
-- ASR: Edge Function에서 호출. 키는 서버에만.
+- **Neon** — Postgres + Data API(PostgREST 호환) + Managed Better Auth.
+  권한은 전적으로 RLS. 신원은 `auth.user_id()` (JWT의 sub, **text**).
+- **Cloudflare R2** — 미디어. 비공개 버킷 + 서명 URL. egress 0원.
+- **Deepgram Nova-3** — 전사. URL을 넘겨 호출하고 키는 서버에만.
+- 서버 함수(R2 서명 발급 · Deepgram 작업)는 Cloudflare Workers 예정.
 - 배포: GitHub push → 자동배포 (main = 프로덕션, PR = 프리뷰)
+
+왜 이 조합인지는 `docs/decisions.md` D-011 · D-012 · D-013.
 
 ## 원본 앱
 
@@ -35,24 +40,32 @@
 - 토큰 인덱스 기반 빈칸 → 단어 문자열 동반 저장 (D-004, 기존은 버그)
 - 손으로 맞추는 A/B 구간반복 → 문장 클릭 반복
 - 클릭해서 정답 확인 → 객관식 탭 + 채점 (D-006)
-- Firestore base64 청크 → Storage 서명 URL 스트리밍 (D-010)
+- Firestore base64 청크 → R2 서명 URL 스트리밍 (D-010, D-012)
 - 소유자 없는 `app/state` 단일 문서 → `owner_id` 있는 정규화 테이블 (D-001)
 
 ## 규칙
 
-- 스키마 변경은 **반드시** `supabase/migrations/` 안의 SQL 파일로. 대시보드에서
+- 스키마 변경은 **반드시** `db/migrations/` 안의 SQL 파일로. 콘솔에서
   직접 고치지 않는다. 그게 이 지침을 읽는 에이전트가 스키마를 알 수 있는 유일한 경로다.
-- 영속화는 `src/lib/store.ts` **한 곳에** 가둔다. 컴포넌트가 Supabase 클라이언트를
+- **RLS를 고치면 `db/tests/rls_test.sql`을 함께 갱신하고 돌린다.** RLS는 깨져도
+  조용하다 — 화면은 멀쩡한데 남의 데이터가 보인다.
+- 영속화는 `src/lib/store.ts` **한 곳에** 가둔다. 컴포넌트가 DB 클라이언트를
   직접 부르지 않는다. (단, 기존 `window.LDB`의 함수 시그니처는 따르지 않는다 — D-009)
+- SDK는 `src/lib/db.ts` 한 파일에만 import한다. `@neondatabase/neon-js`가
+  아직 베타라 API가 바뀔 수 있다.
 - 미디어는 `<audio>`가 **Range 요청으로 스트리밍**하게 한다. 전체를 받아 Blob URL을
   만들지 않는다 (기존 앱의 실수이자 메모리 누수 원인).
 - `gapfill.ts`의 빈칸 선정은 **결정론적**이어야 한다. 같은 입력 → 같은 출력.
   수정 시 회귀 테스트를 함께 갱신한다.
-- 모든 콘텐츠 테이블에 `owner_id`. RLS는 테넌트 기준으로 쓴다.
-  `using (true)` 같은 전역 공개 정책을 쓰지 않는다.
-- `service_role` 키는 절대 클라이언트 코드나 `VITE_` 환경변수에 넣지 않는다.
-  ASR API 키도 마찬가지 — Edge Function 안에만.
-- Storage 경로는 `{owner_id}/...`로 나눈다. 버킷은 public이 아니라 서명 URL.
+- 모든 콘텐츠 테이블에 `owner_id text default auth.user_id()`. RLS는 테넌트
+  기준으로 쓴다. `using (true)` 같은 전역 공개 정책을 쓰지 않는다.
+  클라이언트가 `owner_id`를 실어 보내게 하지 않는다 — DB가 채운다.
+- 학생(anonymous)에게는 **테이블 권한 자체를 주지 않는다.** 학생 접근은 반 코드를
+  인자로 받는 SECURITY DEFINER 함수로만 연다.
+- R2 자격증명과 Deepgram 키는 절대 클라이언트 코드나 `VITE_` 환경변수에 넣지
+  않는다. 서버 함수 안에만.
+- R2 오브젝트 키는 `{owner_id}/...`로 나눈다. 키는 **서버가 정한다** —
+  클라이언트가 경로를 정하면 남의 폴더에 쓸 수 있다.
 - 결정은 대화가 아니라 **파일에** 남긴다. 새 결정은 `docs/decisions.md`에 append.
 - UI 문구는 한국어. 기존 앱의 어투를 따른다.
 

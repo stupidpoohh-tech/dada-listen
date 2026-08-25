@@ -4,11 +4,10 @@
  * 4~7단계에서 붙는다. 화면은 원본의 토큰과 클래스로만 조립한다 (CLAUDE.md). */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { User } from '@supabase/supabase-js';
 import Login from './components/Login';
 import { Ic, fmt } from './components/icons';
 import { listFolders, listItems, onAuthChange, signOut } from './lib/store';
-import type { Folder, Item } from './lib/types';
+import type { AuthUser, Folder, Item } from './lib/types';
 
 /** 상태 배지 문구. ASR 파이프라인이 붙으면 실제로 움직인다 (D-002). */
 const STATUS_LABEL: Record<Item['status'], string> = {
@@ -20,7 +19,7 @@ const STATUS_LABEL: Record<Item['status'], string> = {
 
 export default function App() {
   const [authReady, setAuthReady] = useState(false);
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [mode, setMode] = useState(() =>
     location.hash.startsWith('#/admin') ? 'admin' : 'view',
   );
