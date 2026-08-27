@@ -22,6 +22,26 @@ createServer((req, res) => {
       return;
     }
 
+    // whoami() 가 security invoker 라 auth 스키마에 못 닿는 경우.
+    // 실제로 프로덕션에서 이걸로 업로드가 막혔다 (0004_whoami_definer.sql).
+    if (token === 'noschema') {
+      res.writeHead(403, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        code: '42501',
+        message: 'permission denied for schema auth',
+        details: null,
+        hint: null,
+      }));
+      return;
+    }
+
+    // 토큰은 유효한데 주인(sub)이 없는 경우. 모양은 맞고 id 만 비어 있다.
+    if (token === 'nosub') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ id: null, approved: false }));
+      return;
+    }
+
     // 0003 을 안 돌려 whoami() 가 아직 text 를 돌려주는 경우.
     if (token === 'oldshape') {
       res.writeHead(200, { 'content-type': 'application/json' });

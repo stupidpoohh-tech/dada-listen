@@ -380,6 +380,41 @@ Data API 가 말한 상태 코드와 본문을 그대로 들고 나간다. 200 �
 
 ---
 
+## D-018 · whoami() 는 security definer 다
+
+**증상.** 업로드가 403 으로 죽었다:
+`{"code":"42501","message":"permission denied for schema auth"}`.
+그런데 **앱 화면은 멀쩡했다** — 목록도 나오고 로그인도 됐다.
+
+**원인.** `whoami()` 는 `security invoker` 라 호출자(`authenticated`) 권한으로
+돈다. 그런데 `authenticated` 에게는 `auth` 스키마 USAGE 가 없어서
+`auth.user_id()` 를 부를 수 없다.
+
+**왜 화면은 멀쩡했나 — 이게 이 건의 핵심이다.** **RLS 정책 식은 호출자가 아니라
+테이블 소유자 권한으로 평가된다.** 그래서 정책 안의 `auth.user_id()` 는 잘 돌고
+목록도 잘 나온다. **함수로 직접 부를 때만** 막힌다. 실제 Postgres 에 같은 구조를
+만들어 확인했다 — RLS SELECT 는 통과, `security invoker` 함수는 42501,
+`security definer` 함수는 통과.
+
+**고르는 길은 둘이었다.**
+- (a) `grant usage on schema auth to authenticated` — 우리 소유가 아닌 스키마의
+  권한을 건드리고, 필요 이상으로 넓게 연다.
+- (b) `whoami()` 하나만 `security definer` 로.
+
+**(b) 로 갔다.** 우리가 만든 함수 하나만 바뀐다.
+
+**신원은 그대로 호출자의 것이다.** `auth.user_id()` 는 역할이 아니라 **세션에
+실린 JWT** 를 읽기 때문이다. 소유자 권한으로 도는 동안 `teachers` 를 RLS 없이
+보게 되지만 조건이 `t.id = auth.user_id()` 라 호출자 본인 행 말고는 닿지 않는다.
+`search_path` 는 `public, auth, pg_temp` 로 고정한다 — 안 그러면 호출자가 임시
+스키마로 이름을 가려 소유자 권한으로 엉뚱한 코드를 돌릴 수 있다.
+
+**확인한 것.** 승인/미승인/행 없음 세 경우가 모두 맞게 나오고, `security definer`
+로 바꾼 뒤에도 `select * from teachers` 는 여전히 RLS 로 0건이며, RLS 회귀
+테스트는 21/21 그대로다.
+
+---
+
 ## 미결 (다음에 정할 것)
 
 - **호스팅**: R2 와 서명 URL·Deepgram 워커 때문에 **Cloudflare Pages + Workers**

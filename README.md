@@ -48,8 +48,11 @@ Neon 프로젝트에서 **Data API 와 Auth 를 먼저 켜야 한다.** 그래�
 확장과 `authenticated` / `anonymous` 역할이 생기고, 마이그레이션의
 `auth.user_id()` 가 존재한다.
 
+마이그레이션은 **번호 순서대로 끝까지** 돌린다. 중간에서 멈추면 화면은 멀쩡한데
+업로드만 막히는 상태가 된다 (D-018).
+
 ```bash
-psql "$NEON_DATABASE_URL" -f db/migrations/0001_init.sql
+for f in db/migrations/*.sql; do psql "$NEON_DATABASE_URL" -f "$f"; done
 ```
 
 ### RLS 테스트
@@ -115,6 +118,10 @@ db/
 3. 화면의 오류 문구를 그대로 읽는다. "로그인이 만료되었습니다" 는 **오직**
    토큰이 거절됐을 때만 나온다. 그 밖의 실패는 Data API 가 뭐라고 했는지
    상태 코드와 함께 그대로 보여준다 (D-017).
+
+**앱 화면은 멀쩡한데 업로드만 막힌다면** `whoami()` 쪽이다. RLS 정책 식은 테이블
+소유자 권한으로 평가돼서 목록은 잘 나오지만, 함수를 직접 부르는 Worker 만
+`auth` 스키마에서 막힐 수 있다 (D-018). 위 점검의 "whoami() 실행 방식" 을 본다.
 
 ## 진행 상황
 

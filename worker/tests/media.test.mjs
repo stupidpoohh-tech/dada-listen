@@ -133,6 +133,26 @@ check('whoami() 가 옛 모양이면 그렇게 말한다',
   && oldShape.error.includes('0003'),
   oldShape.error);
 
+const noSchema = await (await fetch(`${B}/api/media/create`, {
+  method:'POST', headers:T('noschema'),
+  body: JSON.stringify({ itemId: ITEM, filename:'x.mp3', contentType:'audio/mpeg' })
+})).json();
+check('42501(permission denied for schema auth)을 만료로 속이지 않는다',
+  typeof noSchema.error === 'string'
+  && !noSchema.error.includes('만료')
+  && noSchema.error.includes('42501'),
+  noSchema.error);
+
+const noSub = await (await fetch(`${B}/api/media/create`, {
+  method:'POST', headers:T('nosub'),
+  body: JSON.stringify({ itemId: ITEM, filename:'x.mp3', contentType:'audio/mpeg' })
+})).json();
+check('id 가 빈 응답은 인증 문제로 안내한다 (마이그레이션 탓으로 돌리지 않는다)',
+  typeof noSub.error === 'string'
+  && noSub.error.includes('로그인')
+  && !noSub.error.includes('0003'),
+  noSub.error);
+
 const badToken = await (await fetch(`${B}/api/media/create`, {
   method:'POST', headers:T('bad'),
   body: JSON.stringify({ itemId: ITEM, filename:'x.mp3', contentType:'audio/mpeg' })

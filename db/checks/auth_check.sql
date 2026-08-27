@@ -29,6 +29,19 @@ select
 
 union all
 select
+  'whoami() 실행 방식',
+  coalesce((
+    select case when p.prosecdef
+      then 'security definer (맞음)'
+      else 'security invoker — auth 스키마에 못 닿아 403(42501)이 납니다. '
+           || '0004_whoami_definer.sql 을 돌리세요' end
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'whoami' and p.pronargs = 0
+  ), '함수가 없습니다')
+
+union all
+select
   'authenticated 실행 권한',
   case when exists (
     select 1 from pg_proc p

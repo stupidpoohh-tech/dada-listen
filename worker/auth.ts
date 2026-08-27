@@ -68,12 +68,16 @@ export async function requireTeacher(request: Request, dataApiUrl: string): Prom
       : null;
   const id = body?.id;
   if (typeof id !== 'string' || id.length === 0) {
-    // 200 인데 모양이 다르다 = 토큰 문제가 아니라 whoami() 가 옛 버전이다
-    // (0002 의 text 반환본). 0003 을 돌리지 않으면 이 길로 온다.
+    // 모양은 맞는데 id 가 비었다 = 토큰에 주인이 없다. 인증 문제다.
+    if (body !== null && 'id' in body) {
+      throw new HttpError(401, '로그인이 필요합니다');
+    }
+    // 모양 자체가 다르다 = 토큰 문제가 아니라 whoami() 가 옛 버전이다
+    // (0002 의 text 반환본). 마이그레이션을 끝까지 돌리지 않으면 이 길로 온다.
     throw new HttpError(
       500,
       `whoami() 응답이 예상과 다릅니다 — ${JSON.stringify(raw)?.slice(0, 200)}. ` +
-        'db/migrations/0003_approved_teacher.sql 을 돌렸는지 확인해 주세요.',
+        'db/migrations/ 의 0003·0004 를 돌렸는지 확인해 주세요.',
     );
   }
   const teacher: Teacher = { id, approved: body?.approved === true };
