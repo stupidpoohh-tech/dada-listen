@@ -10,7 +10,9 @@ createServer((req, res) => {
     const token = auth.replace(/^Bearer\s+/i, '');
     if (!token || token === 'bad') { res.writeHead(401).end('{}'); return; }
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify(token));   // whoami() 는 text → JSON 문자열
+    // whoami() 는 {id, approved} 를 돌려준다.
+    // 토큰이 'unapproved' 로 시작하면 미승인 계정을 흉내낸다.
+    res.end(JSON.stringify({ id: token, approved: !token.startsWith('unapproved') }));
     return;
   }
   res.writeHead(404).end('{}');

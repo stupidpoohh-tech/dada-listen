@@ -13,7 +13,7 @@
 | R2 버킷 `dada-media` | ✅ 생성됨, Public Access 꺼짐 |
 | Deepgram 키 | ⬜ 아직 |
 | Neon 연결 문자열 | ⬜ 아직 |
-| 스키마 적용 | ⬜ 아직 |
+| 스키마 적용 | ⬜ 아직 (0001·0002·0003) |
 | Cloudflare 비밀 3개 | ⬜ 아직 |
 
 **R2 access key 는 만들지 않습니다.** Worker 가 바인딩으로 붙으므로 필요 없습니다.
@@ -32,10 +32,12 @@ Neon 콘솔 → 프로젝트 → **Connect** → `postgresql://...` 복사.
 
 **Neon 콘솔 → SQL Editor** (psql 없이 됩니다)
 
-1. `db/migrations/0001_init.sql` 내용을 통째로 붙여넣고 **Run**
-2. 새 쿼리에 `db/tests/rls_test.sql` 내용을 붙여넣고 **Run**
+1. `db/migrations/0001_init.sql` 을 붙여넣고 **Run**
+2. `db/migrations/0002_whoami.sql` 을 붙여넣고 **Run**
+3. `db/migrations/0003_approved_teacher.sql` 을 붙여넣고 **Run**
+4. `db/tests/rls_test.sql` 을 붙여넣고 **Run**
 
-2번 결과가 표로 나옵니다. 마지막 요약 줄에 **FAIL 이 0** 이어야 합니다:
+4번 결과가 표로 나옵니다. 마지막 요약 줄에 **FAIL 이 0** 이어야 합니다:
 
 ```
 9 PASS / 0 FAIL / 1 SKIP   통과 — 다음 단계로 진행하세요
@@ -65,8 +67,40 @@ psql "$NEON_DATABASE_URL" -f db/tests/rls_test.sql
 
 ## 3. 강사 계정 만들기
 
-Neon 콘솔 → **Auth** → 사용자 추가. 사장님 이메일과 비밀번호로 하나만 만드시면 됩니다.
-학생은 계정을 만들지 않습니다 (반 코드로 들어옵니다).
+**Neon 콘솔의 Create user 로는 로그인할 수 없습니다.** 이메일과 이름만 받고
+비밀번호를 만들지 않기 때문입니다. 비밀번호는 앱의 가입 경로로만 생깁니다.
+
+1. 콘솔에서 이미 만든 사용자가 있으면 **먼저 지웁니다** (사용자 행의 ⋮ → Delete).
+   같은 이메일이 남아 있으면 가입이 충돌합니다.
+2. 배포된 앱에서 우측 상단 **관리자** → **처음이신가요? 관리자 계정 만들기**
+3. 이메일·비밀번호(8자 이상)·이름을 넣고 **계정 만들고 시작하기**
+
+학생은 이 화면을 쓰지 않습니다. 반 코드로 들어옵니다 (D-005).
+
+### ⚠️ 가입이 공개되어 있습니다
+
+Neon Auth 콘솔에 이렇게 적혀 있습니다 — *"Anyone on the web can sign up for
+your app. Support for restricted signups is coming soon."* 아직 막을 방법이
+없습니다.
+
+RLS 덕분에 낯선 사람이 가입해도 **남의 자료는 못 봅니다.** 다만 자기 공간에서
+업로드하고 전사를 돌릴 수는 있고, 그러면 R2 용량과 Deepgram 크레딧이 남의 손에
+나갑니다.
+
+그래서 `teachers.approved` 를 뒀습니다. 기본값은 `false` 이고, 승인된 강사만
+업로드·전사를 할 수 있습니다. 로그인과 목록 보기는 막지 않습니다.
+
+**계정을 만든 뒤 자기 자신을 승인하세요** (SQL Editor):
+
+```sql
+-- 내 계정 확인
+select id, name, approved from public.teachers;
+
+-- 승인
+update public.teachers set approved = true where id = '<위에서 본 id>';
+```
+
+나중에 동료 강사가 생기면 같은 방법으로 켜주면 됩니다.
 
 ## 4. Deepgram 키 발급
 

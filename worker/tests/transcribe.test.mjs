@@ -78,6 +78,14 @@ const stealResult = await fetch(`${B}/api/transcribe/result?key=${encodeURICompo
 });
 ck('B 는 A 전사 결과를 못 가져간다', stealResult.status === 403, String(stealResult.status));
 
+// --- 미승인 계정은 전사를 못 건다 (Deepgram 크레딧 보호) ---
+const unapproved = await fetch(`${B}/api/transcribe`, {
+  method: 'POST', headers: T('unapproved_stranger'),
+  body: JSON.stringify({ key: `unapproved_stranger/${ITEM}.mp3` }),
+});
+ck('미승인 계정은 전사를 걸 수 없다', unapproved.status === 403,
+  (await unapproved.json()).error ?? String(unapproved.status));
+
 // --- 위조 콜백 ---
 const forged = await fetch(`${B}/api/transcribe/callback?key=${encodeURIComponent(c.key)}&exp=9999999999&sig=forged`, {
   method: 'POST', headers: { 'content-type': 'application/json' },

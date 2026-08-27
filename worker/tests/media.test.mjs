@@ -97,6 +97,14 @@ const stealDel = await (await fetch(`${B}/api/media/delete`, {
 })).json();
 check('B 는 A 파일을 못 지운다', stealDel.error !== undefined, stealDel.error ?? '지워짐 — 위험');
 
+// --- 미승인 계정은 돈 나가는 작업을 못 한다 (공개 가입 대비) ---
+const unapprovedCreate = await (await fetch(`${B}/api/media/create`, {
+  method:'POST', headers:T('unapproved_stranger'),
+  body: JSON.stringify({ itemId: ITEM, filename:'x.mp3', contentType:'audio/mpeg' })
+})).json();
+check('미승인 계정은 업로드를 시작할 수 없다', unapprovedCreate.error !== undefined,
+  unapprovedCreate.error ?? '허용됨 — 크레딧 위험');
+
 // --- 삭제 ---
 const del = await (await fetch(`${B}/api/media/delete`, {
   method:'POST', headers:T('teacher_A'), body: JSON.stringify({ key: small.key })

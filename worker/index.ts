@@ -11,7 +11,7 @@
  *
  * 비밀은 wrangler secret put 으로 넣고 env 에서 읽는다 — 코드에 적지 않는다. */
 
-import { requireTeacherId } from './auth';
+import { requireApproved, requireTeacher } from './auth';
 import { errorResponse, json, HttpError } from './http';
 import {
   startTranscription,
@@ -104,10 +104,18 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 
   // 나머지 /api/media/* 는 전부 로그인한 강사만.
   if (path.startsWith('/api/media/')) {
-    const ownerId = await requireTeacherId(request, env.NEON_DATA_API_URL);
+    const teacher = await requireTeacher(request, env.NEON_DATA_API_URL);
+    const ownerId = teacher.id;
 
-    if (path === '/api/media/create' && method === 'POST') return createUpload(request, env, ownerId);
-    if (path === '/api/media/part' && method === 'PUT') return uploadPart(request, env, ownerId, url);
+    // 새 파일을 올리는 것만 승인이 필요하다. 이미 올린 것을 듣고 지우는 건 된다.
+    if (path === '/api/media/create' && method === 'POST') {
+      requireApproved(teacher);
+      return createUpload(request, env, ownerId);
+    }
+    if (path === '/api/media/part' && method === 'PUT') {
+      requireApproved(teacher);
+      return uploadPart(request, env, ownerId, url);
+    }
     if (path === '/api/media/complete' && method === 'POST') return completeUpload(request, env, ownerId);
     if (path === '/api/media/abort' && method === 'POST') return abortUpload(request, env, ownerId);
     if (path === '/api/media/play-url' && method === 'POST') {
@@ -117,12 +125,14 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   }
 
   if (path.startsWith('/api/transcribe')) {
-    const ownerId = await requireTeacherId(request, env.NEON_DATA_API_URL);
+    const teacher = await requireTeacher(request, env.NEON_DATA_API_URL);
     if (path === '/api/transcribe' && method === 'POST') {
-      return startTranscription(request, env, ownerId, url.origin);
+      // 여기가 돈이 나가는 지점이다. 공개 가입이라 승인 확인이 꼭 필요하다.
+      requireApproved(teacher);
+      return startTranscription(request, env, teacher.id, url.origin);
     }
     if (path === '/api/transcribe/result') {
-      return transcriptionResult(request, env, ownerId, url);
+      return transcriptionResult(request, env, teacher.id, url);
     }
   }
 

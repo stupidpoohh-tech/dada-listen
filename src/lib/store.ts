@@ -63,6 +63,22 @@ export async function signIn(email: string, password: string): Promise<void> {
   if (error) throw error;
 }
 
+/**
+ * 강사 계정을 만든다. **첫 설정 때 한 번만 쓴다.**
+ *
+ * Neon 콘솔의 Create user 는 이메일과 이름만 받고 비밀번호를 만들지 않는다.
+ * 비밀번호는 이 signUp 경로로만 생기므로, 이게 없으면 로그인할 방법이 없다.
+ * 학생에게는 절대 쓰지 않는다 — 학생은 반 코드로 들어온다 (D-005).
+ */
+export async function signUpTeacher(email: string, password: string, name: string): Promise<void> {
+  const { error } = await db.auth.signUp({
+    email,
+    password,
+    options: { data: { name } },
+  });
+  if (error) throw error;
+}
+
 export async function signOut(): Promise<void> {
   clearMediaUrlCache();
   const { error } = await db.auth.signOut();
