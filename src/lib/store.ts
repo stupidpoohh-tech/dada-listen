@@ -70,13 +70,19 @@ export async function signIn(email: string, password: string): Promise<void> {
  * 비밀번호는 이 signUp 경로로만 생기므로, 이게 없으면 로그인할 방법이 없다.
  * 학생에게는 절대 쓰지 않는다 — 학생은 반 코드로 들어온다 (D-005).
  */
-export async function signUpTeacher(email: string, password: string, name: string): Promise<void> {
-  const { error } = await db.auth.signUp({
+export async function signUpTeacher(
+  email: string,
+  password: string,
+  name: string,
+): Promise<{ signedIn: boolean }> {
+  const { data, error } = await db.auth.signUp({
     email,
     password,
     options: { data: { name } },
   });
   if (error) throw error;
+  // 이메일 확인이 켜져 있으면 가입은 되지만 세션이 없다. 호출부가 알아야 한다.
+  return { signedIn: Boolean(data?.session) };
 }
 
 export async function signOut(): Promise<void> {
