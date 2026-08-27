@@ -6,7 +6,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Login from './components/Login';
 import { Ic, fmt } from './components/icons';
-import { ensureTeacher, listFolders, listItems, onAuthChange, signOut } from './lib/store';
+import UploadModal from './components/UploadModal';
+import {
+  collectTranscription,
+  ensureTeacher,
+  listFolders,
+  listItems,
+  onAuthChange,
+  signOut,
+} from './lib/store';
 import type { AuthUser, Folder, Item } from './lib/types';
 
 /** 상태 배지 문구. ASR 파이프라인이 붙으면 실제로 움직인다 (D-002). */
@@ -29,6 +37,7 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState('');
 
+  const [upload, setUpload] = useState(false);
   const [sel, setSel] = useState<string>('all');
   const [selTag, setSelTag] = useState<string | null>(null);
   const [navOpen, setNavOpen] = useState(false);
@@ -57,6 +66,18 @@ export default function App() {
     [],
   );
 
+  /** 목록을 다시 읽는다. 업로드·전사 뒤에도 부른다. */
+  const refresh = useCallback(async () => {
+    try {
+      const [f, i] = await Promise.all([listFolders(), listItems()]);
+      setFolders(f);
+      setItems(i);
+      setLoadError('');
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : '자료를 불러오지 못했어요');
+    }
+  }, []);
+
   // 콘텐츠는 RLS 로 강사 본인 것만 내려온다. 로그인 전에는 부르지 않는다.
   useEffect(() => {
     if (!user) {
@@ -73,23 +94,49 @@ export default function App() {
         // 승인 여부(teachers.approved)를 볼 데가 없어서 업로드가 막힌다.
         // upsert 라 두 번째 로그인부터는 아무 일도 하지 않는다.
         await ensureTeacher(user.email?.split('@')[0] ?? '강사');
-
-        const [f, i] = await Promise.all([listFolders(), listItems()]);
-        if (!alive) return;
-        setFolders(f);
-        setItems(i);
-        setLoadError('');
       } catch (e) {
-        if (!alive) return;
-        setLoadError(e instanceof Error ? e.message : '자료를 불러오지 못했어요');
-      } finally {
-        if (alive) setLoaded(true);
+        console.error('[teacher]', e);
       }
+      if (!alive) return;
+      await refresh();
+      if (alive) setLoaded(true);
     })();
     return () => {
       alive = false;
     };
-  }, [user]);
+  }, [user, refresh]);
+
+  /**
+   * 전사가 끝났는지 주기적으로 확인한다.
+   * 업로드 모달을 닫아도 여기서 이어받으므로 작업이 유실되지 않는다.
+   */
+  useEffect(() => {
+    const waiting = items.filter(
+      (i) => i.mediaKey && (i.status === 'pending' || i.status === 'processing'),
+    );
+    if (waiting.length === 0) return;
+
+    let alive = true;
+    const timer = setInterval(() => {
+      void (async () => {
+        let changed = false;
+        for (const it of waiting) {
+          if (!alive || !it.mediaKey) return;
+          try {
+            if (await collectTranscription(it.id, it.mediaKey)) changed = true;
+          } catch (e) {
+            console.error('[transcribe poll]', e);
+          }
+        }
+        if (changed && alive) await refresh();
+      })();
+    }, 5000);
+
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [items, refresh]);
 
   if (!authReady || !loaded) {
     return (
@@ -212,6 +259,9 @@ export default function App() {
               <button className="btn sm" onClick={copyShare}>
                 <Ic.link /> <span className="lbl">공유 링크</span>
               </button>
+              <button className="btn primary sm" onClick={() => setUpload(true)}>
+                <Ic.upload s={16} /> <span className="lbl">새 음성</span>
+              </button>
             </>
           ) : (
             <>
@@ -236,6 +286,11 @@ export default function App() {
                   ? '영상이나 음성을 올려 첫 듣기 자료를 만들어 보세요.'
                   : '곧 자료가 추가될 예정이에요.'}
               </p>
+              {isAdmin && (
+                <button className="btn primary" onClick={() => setUpload(true)}>
+                  <Ic.upload /> 새 음성 추가
+                </button>
+              )}
             </div>
           ) : (
             <div>
@@ -279,6 +334,14 @@ export default function App() {
         </div>
       </main>
 
+      {upload && (
+        <UploadModal
+          folders={folders}
+          onClose={() => setUpload(false)}
+          onChanged={() => void refresh()}
+          toast={toast}
+        />
+      )}
       {toastMsg && <div className="toast">{toastMsg}</div>}
     </div>
   );

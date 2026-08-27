@@ -83,7 +83,10 @@ src/
     workerApi.ts    Worker API 계약 (미디어 · 전사)
     media.ts        업로드 파일 전처리 (MIME 보정, 길이 읽기)
     types.ts        도메인 타입. DB 스키마와 짝이 맞아야 한다.
-  components/       원본 HTML 에서 이식한 UI
+  components/
+    Login.tsx       강사 로그인 · 첫 계정 만들기
+    UploadModal.tsx 업로드 → 전사 → 스크립트 미리보기
+    icons.tsx       원본의 인라인 SVG
   styles/
     tokens.css      디자인 토큰의 단일 진실 (원본 :root 그대로)
     app.css         나머지 스타일 (원본 그대로)
@@ -106,7 +109,8 @@ db/
 - [x] 3단계 — store + R2 스트리밍 + 강사 인증
 - [x] 4단계 (앞) — Worker 미디어 계층: 멀티파트 업로드 · Range 스트리밍 · 서명 URL
 - [x] 4단계 (뒤) — Deepgram 전사 → 세그먼트
-- [ ] 5단계 — 업로드/스크립트 교정 UI ← 다음
+- [x] 5단계 (앞) — 업로드 화면: 파일 → 전사 → 스크립트
+- [ ] 5단계 (뒤) — 스크립트 교정 · 빈칸 편집 UI ← 다음
 - [ ] 6단계 — 플레이어 + 타임스탬프 기능
 - [ ] 7단계 — 갭필 학습 UI (난이도, 객관식) ← 1차 배포 지점
 - [ ] 8단계 — 반 · 학생 · 과제 · 제출 현황

@@ -78,16 +78,19 @@ export async function startTranscription(
   ownerId: string,
   origin: string,
 ): Promise<Response> {
-  if (!env.DEEPGRAM_API_KEY) throw new HttpError(500, 'DEEPGRAM_API_KEY 가 설정되지 않았습니다');
-  const secret = env.MEDIA_TOKEN_SECRET;
-  if (!secret) throw new HttpError(500, 'MEDIA_TOKEN_SECRET 이 설정되지 않았습니다');
-
+  // 권한을 설정보다 먼저 본다. 순서를 뒤집으면 설정이 빠졌을 때 권한 없는
+  // 요청까지 500 으로 거절되어, 거절된 진짜 이유를 알 수 없게 된다.
+  // (실제로 테스트가 이 때문에 엉뚱한 이유로 통과한 적이 있다.)
   const body = await readJson<{ key?: string }>(request);
   const mediaKey = body.key ?? '';
   if (mediaKey.split('/')[0] !== ownerId) throw new HttpError(403, '이 파일에 접근할 권한이 없습니다');
 
   const head = await env.MEDIA.head(mediaKey);
   if (!head) throw new HttpError(404, '음원을 찾을 수 없습니다');
+
+  if (!env.DEEPGRAM_API_KEY) throw new HttpError(500, 'DEEPGRAM_API_KEY 가 설정되지 않았습니다');
+  const secret = env.MEDIA_TOKEN_SECRET;
+  if (!secret) throw new HttpError(500, 'MEDIA_TOKEN_SECRET 이 설정되지 않았습니다');
 
   // 이전 결과가 남아 있으면 지운다. 재전사 시 옛 결과를 가져가는 걸 막는다.
   await env.MEDIA.delete(resultKey(mediaKey)).catch(() => {});

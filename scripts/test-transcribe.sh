@@ -1,10 +1,19 @@
 #!/usr/bin/env bash
 # 전사 파이프라인 종단 테스트.
-# fake-neon(인증) + fake-deepgram(전사) + wrangler dev(로컬 R2) 를 띄우고 돌린다.
 set -euo pipefail
+cd "$(dirname "$0")/.."
+source scripts/_worker-harness.sh
 
-cleanup() { kill ${NEON_PID:-} ${DG_PID:-} ${WRANGLER_PID:-} 2>/dev/null || true; }
+STATE=""
+cleanup() {
+  kill ${NEON_PID:-} ${DG_PID:-} ${WRANGLER_PID:-} 2>/dev/null || true
+  [ -n "$STATE" ] && rm -rf "$STATE"
+  true
+}
 trap cleanup EXIT
+
+harness_require_free_ports $PORT_WORKER $PORT_NEON $PORT_DEEPGRAM
+STATE=$(harness_state_dir)
 
 npm run build >/dev/null
 
@@ -13,16 +22,12 @@ NEON_PID=$!
 node worker/tests/fake-deepgram.mjs >/dev/null 2>&1 &
 DG_PID=$!
 
-npx wrangler dev --local --port 8790 \
+npx wrangler dev --local --port $PORT_WORKER --persist-to "$STATE" \
   --var MEDIA_TOKEN_SECRET:testsecret123 \
-  --var NEON_DATA_API_URL:http://127.0.0.1:8999 \
-  --var DEEPGRAM_URL:http://127.0.0.1:8998/v1/listen \
+  --var NEON_DATA_API_URL:http://127.0.0.1:$PORT_NEON \
+  --var DEEPGRAM_URL:http://127.0.0.1:$PORT_DEEPGRAM/v1/listen \
   --var DEEPGRAM_API_KEY:fake-key >/dev/null 2>&1 &
 WRANGLER_PID=$!
 
-for i in $(seq 1 40); do
-  if curl -sf --noproxy '*' -o /dev/null http://127.0.0.1:8790/api/health; then break; fi
-  sleep 1
-done
-
+harness_wait_ready
 node worker/tests/transcribe.test.mjs
