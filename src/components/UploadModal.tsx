@@ -8,11 +8,13 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Ic } from './icons';
+import TrimPanel from './TrimPanel';
 import { ACCEPT_MEDIA, isAudioFile, readDuration } from '../lib/media';
 import {
   collectTranscription,
   createItem,
   deleteItem,
+  listSegments,
   requestTranscription,
   updateItem,
   uploadMedia,
@@ -40,6 +42,8 @@ type Props = {
 
 export default function UploadModal({ folders, onClose, onChanged, toast }: Props) {
   const [file, setFile] = useState<File | null>(null);
+  /** 원본. 자르기를 취소하면 여기로 되돌린다. */
+  const [original, setOriginal] = useState<File | null>(null);
   const [title, setTitle] = useState('');
   const [folderId, setFolderId] = useState<string>(folders[0]?.id ?? '');
   const [tags, setTags] = useState<string[]>([]);
@@ -59,6 +63,7 @@ export default function UploadModal({ folders, onClose, onChanged, toast }: Prop
   const pickFile = async (f: File | undefined) => {
     if (!f) return;
     setFile(f);
+    setOriginal(f);
     setPhase({ kind: 'reading' });
     if (!title) setTitle(f.name.replace(/\.[^.]+$/, ''));
     const d = await readDuration(f);
@@ -103,7 +108,6 @@ export default function UploadModal({ folders, onClose, onChanged, toast }: Prop
         const finished = await collectTranscription(itemId, mediaKey);
         if (finished) {
           onChanged();
-          const { listSegments } = await import('../lib/store');
           const segments = await listSegments(itemId);
           if (!alive.current) return;
           if (segments.length === 0) {
@@ -177,6 +181,22 @@ export default function UploadModal({ folders, onClose, onChanged, toast }: Prop
                     onChange={(e) => void pickFile(e.target.files?.[0])}
                   />
                 </button>
+
+                {original && phase.kind === 'idle' && (
+                  <TrimPanel
+                    file={original}
+                    disabled={busy}
+                    onTrimmed={(clip) => {
+                      void (async () => {
+                        const next = clip ?? original;
+                        setFile(next);
+                        setDurationSec(await readDuration(next));
+                        if (clip) toast('구간을 잘랐어요. 이 부분만 올라갑니다');
+                      })();
+                    }}
+                  />
+                )}
+
                 <ProgressLine phase={phase} />
               </div>
 

@@ -82,10 +82,12 @@ src/
     db.ts           Neon 클라이언트 초기화. SDK 는 여기서만 import 한다.
     workerApi.ts    Worker API 계약 (미디어 · 전사)
     media.ts        업로드 파일 전처리 (MIME 보정, 길이 읽기)
+    trim.ts         올리기 전 구간 잘라내기 (Web Audio → WAV)
     types.ts        도메인 타입. DB 스키마와 짝이 맞아야 한다.
   components/
     Login.tsx       강사 로그인 · 첫 계정 만들기
     UploadModal.tsx 업로드 → 전사 → 스크립트 미리보기
+    TrimPanel.tsx   긴 음원에서 문제 하나만 떼어내기
     icons.tsx       원본의 인라인 SVG
   styles/
     tokens.css      디자인 토큰의 단일 진실 (원본 :root 그대로)

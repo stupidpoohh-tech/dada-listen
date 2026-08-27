@@ -7,7 +7,7 @@
  *
  * DB 는 snake_case, 앱은 camelCase. 변환은 이 파일 안에서만 한다. */
 
-import { db } from './db';
+import { clearDataApiToken, db, getDataApiToken } from './db';
 import {
   PART_SIZE,
   abortUpload,
@@ -87,6 +87,7 @@ export async function signUpTeacher(
 
 export async function signOut(): Promise<void> {
   clearMediaUrlCache();
+  clearDataApiToken();
   const { error } = await db.auth.signOut();
   if (error) throw error;
 }
@@ -116,13 +117,14 @@ export async function getTeacher(): Promise<Teacher | null> {
   return data ? { id: data.id as string, name: data.name as string } : null;
 }
 
-/** 미디어 API 호출에 실을 액세스 토큰. 서버가 이걸로 소유자를 확인한다. */
-async function requireToken(): Promise<string> {
-  const { data, error } = await db.auth.getSession();
-  const token = data.session?.access_token;
-  if (error || !token) throw new Error('로그인이 필요합니다');
-  return token;
-}
+/**
+ * 우리 Worker 호출에 실을 토큰. 서버가 이걸로 소유자를 확인한다.
+ *
+ * 세션의 access_token 이 아니라 **Data API 가 받는 JWT** 여야 한다. 둘은 다른
+ * 물건이고, 세션 토큰을 보내면 Data API 가 거절해 업로드가 통째로 죽는다.
+ * 어떻게 얻는지는 db.ts 의 "Data API 토큰 가로채기" 주석 참조.
+ */
+const requireToken = getDataApiToken;
 
 /* ------------------------------------------------------------------ *
  * 행 변환
