@@ -1,13 +1,13 @@
 node_modules/
 dist/
-.env
+
+# .env 는 커밋한다 — 공개 값만 들어간다 (아래 파일 주석 참조).
+# 비밀은 wrangler secret put 으로만 넣는다.
 .env.local
 .env.*.local
 *.local
 .DS_Store
 .vscode/
-supabase/.temp/
-supabase/.branches/
 
 # wrangler 로컬 상태/캐시 (miniflare)
 .wrangler/

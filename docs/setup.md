@@ -30,21 +30,28 @@ Neon 콘솔 → 프로젝트 → **Connect** → `postgresql://...` 복사.
 
 ## 2. 스키마 적용
 
+**`psql` 없이 브라우저에서 하는 방법 (권장)**
+
+1. Neon 콘솔 → **SQL Editor**
+2. `db/migrations/0001_init.sql` 파일 내용을 통째로 붙여넣고 **Run**
+3. 새 쿼리에 `db/tests/rls_test.sql` 내용을 붙여넣고 **Run**
+
+3번 결과가 **표**로 나옵니다. 마지막 요약 줄이 이래야 합니다:
+
+```
+16 PASS / 0 FAIL   통과 — 다음 단계로 진행하세요
+```
+
+한 줄이라도 ❌ FAIL 이면 **멈추고 알려주세요.** RLS 는 깨져도 화면이 멀쩡해서
+이 테스트가 유일한 경보입니다. 테스트는 끝에서 롤백하므로 데이터를 남기지 않습니다.
+
+**`psql` 이 있으면**
+
 ```bash
 export NEON_DATABASE_URL='postgresql://...'      # 1번에서 복사한 값
 psql "$NEON_DATABASE_URL" -f db/migrations/0001_init.sql
-```
-
-바로 이어서 RLS 가 제대로 걸렸는지 확인합니다. **16줄이 전부 PASS 여야 합니다.**
-
-```bash
 psql "$NEON_DATABASE_URL" -f db/tests/rls_test.sql
 ```
-
-한 줄이라도 FAIL 이면 멈추고 알려주세요. RLS 는 깨져도 화면은 멀쩡해서,
-이 테스트가 유일한 경보입니다.
-
-> `psql` 이 없으면 Neon 콘솔의 **SQL Editor** 에 파일 내용을 붙여넣어도 됩니다.
 
 ## 3. 강사 계정 만들기
 
@@ -84,9 +91,28 @@ wrangler secret put MEDIA_TOKEN_SECRET
 ## 6. 자동 배포 연결
 
 Cloudflare 대시보드 → **Workers & Pages** → 이 Worker → **Settings** → **Builds**
-→ GitHub 저장소 연결, 브랜치는 `main`.
+→ GitHub 저장소 연결.
 
-빌드 명령은 `npm run build`, 출력은 `dist` 입니다 (`wrangler.toml` 이 나머지를 압니다).
+**빌드 설정을 아래 그대로 넣으세요.**
+
+| 항목 | 값 |
+|---|---|
+| Build command | `npm run build` |
+| Deploy command | `npx wrangler deploy` |
+| **Root directory** | **`/`** (비워두거나 슬래시 하나) |
+| Build variables | **없음** |
+
+> ⚠️ **Root directory 를 `/dist` 로 두면 실패합니다.**
+> `Failed: root directory not found` 가 그 증상입니다.
+> `dist/` 는 저장소에 없습니다 — 빌드가 만들어내는 폴더라 `.gitignore` 에 있고,
+> Cloudflare 는 클론 직후에 그 경로를 찾다가 멈춥니다.
+> Root directory 는 **저장소 루트**를 가리켜야 합니다. 빌드 결과물이 `dist` 라는
+> 것은 `wrangler.toml` 의 `[assets]` 가 이미 알고 있습니다.
+
+> **Build variables 는 넣지 않아도 됩니다.** 프론트엔드가 빌드 때 필요로 하는
+> Neon 주소는 저장소의 `.env` 에 커밋돼 있습니다. 대시보드에만 넣어두면
+> 그걸 잊는 순간 설정 화면만 뜨는 앱이 배포되기 때문에, 파일에 두는 쪽을
+> 택했습니다. (공개돼도 되는 값이고 권한은 RLS 가 막습니다.)
 
 ## 7. 제대로 됐는지 확인
 
