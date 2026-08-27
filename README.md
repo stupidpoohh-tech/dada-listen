@@ -31,6 +31,7 @@ npm run dev
 | `npm run worker:dev` | Worker + 프론트엔드를 한 번에 로컬 실행 |
 | `npm run deploy` | Cloudflare Workers 배포 |
 | `npm run test:media` | 미디어 엔드포인트 종단 테스트 (업로드·Range·서명·격리) |
+| `npm run test:transcribe` | 전사 파이프라인 종단 테스트 (Deepgram 스텁) |
 
 배포 후 `/api/health` 를 열면 R2 바인딩과 비밀 설정 여부를 확인할 수 있습니다
 (값은 표시되지 않고 설정됐는지만 보여줍니다).
@@ -79,7 +80,7 @@ src/
     wordlists.ts    STOP / COMMON 단어 목록 (데이터)
     store.ts        영속화 경계. 컴포넌트는 DB 클라이언트를 직접 부르지 않는다.
     db.ts           Neon 클라이언트 초기화. SDK 는 여기서만 import 한다.
-    mediaApi.ts     R2 서명 URL 발급 API 계약
+    workerApi.ts    Worker API 계약 (미디어 · 전사)
     media.ts        업로드 파일 전처리 (MIME 보정, 길이 읽기)
     types.ts        도메인 타입. DB 스키마와 짝이 맞아야 한다.
   components/       원본 HTML 에서 이식한 UI
@@ -90,6 +91,7 @@ worker/
   index.ts          라우터 + /api/health
   auth.ts           토큰의 주인 확인 (Neon 에 whoami 로 물어본다)
   media.ts          R2 업로드(멀티파트) · Range 스트리밍 · 삭제
+  transcribe.ts     Deepgram 전사 시작 · 콜백 수신 · 결과 전달
   sign.ts           재생 URL HMAC 서명
   tests/            종단 테스트 + Neon 스텁
 db/
@@ -103,8 +105,8 @@ db/
 - [x] 2단계 — gapfill 이식 + 알고리즘 개선 + 테스트
 - [x] 3단계 — store + R2 스트리밍 + 강사 인증
 - [x] 4단계 (앞) — Worker 미디어 계층: 멀티파트 업로드 · Range 스트리밍 · 서명 URL
-- [ ] 4단계 (뒤) — Deepgram 전사 → 세그먼트
-- [ ] 5단계 — 업로드/스크립트 교정 UI
+- [x] 4단계 (뒤) — Deepgram 전사 → 세그먼트
+- [ ] 5단계 — 업로드/스크립트 교정 UI ← 다음
 - [ ] 6단계 — 플레이어 + 타임스탬프 기능
 - [ ] 7단계 — 갭필 학습 UI (난이도, 객관식) ← 1차 배포 지점
 - [ ] 8단계 — 반 · 학생 · 과제 · 제출 현황

@@ -15,9 +15,12 @@ import {
   createPlaybackUrl,
   createUpload,
   deleteObject,
+  fetchTranscription,
+  startTranscription as startTranscriptionApi,
   uploadPart,
+  type TranscriptionState,
   type UploadedPart,
-} from './mediaApi';
+} from './workerApi';
 import type { Level } from './gapfill';
 import type {
   AuthUser,
@@ -338,7 +341,7 @@ export async function clearGapOverride(
  * 미디어 — Cloudflare R2 + 서명 URL (D-012)
  *
  * R2 자격증명은 서버에만 있다. 브라우저는 우리 API 에서 서명 URL 을 받아
- * 그것으로만 올리고 재생한다. 발급 엔드포인트는 mediaApi.ts 참조.
+ * 그것으로만 올리고 재생한다. 발급 엔드포인트는 workerApi.ts 참조.
  * ------------------------------------------------------------------ */
 
 /** 서명 URL 유효기간(초). 수업 한 타임보다 넉넉하되 영구는 아니게. */
@@ -425,4 +428,71 @@ export async function deleteMedia(key: string): Promise<void> {
 /** 로그아웃 시 캐시를 비운다. 남의 세션에 이전 서명 URL 이 남지 않게. */
 export function clearMediaUrlCache(): void {
   urlCache.clear();
+}
+
+/* ------------------------------------------------------------------ *
+ * 전사 (D-013)
+ *
+ * 결과를 Worker 가 DB 에 직접 쓰지 않는다. Deepgram 콜백에는 사용자 세션이
+ * 없어서, Worker 에 DB 자격증명을 두면 RLS 를 우회하는 경로가 생긴다.
+ * 대신 결과를 잠깐 R2 에 두고 여기서 강사 본인 세션으로 저장한다.
+ * ------------------------------------------------------------------ */
+
+/** 전사를 걸고 아이템 상태를 processing 으로 바꾼다. */
+export async function requestTranscription(itemId: string, mediaKey: string): Promise<void> {
+  const token = await requireToken();
+  await updateItem(itemId, { status: 'processing', statusError: null });
+  try {
+    await startTranscriptionApi(token, mediaKey);
+  } catch (e) {
+    await updateItem(itemId, {
+      status: 'failed',
+      statusError: e instanceof Error ? e.message : '전사 요청에 실패했습니다',
+    });
+    throw e;
+  }
+}
+
+/** 한 번 확인한다. 화면에서 주기적으로 부른다. */
+export async function checkTranscription(mediaKey: string): Promise<TranscriptionState> {
+  return fetchTranscription(await requireToken(), mediaKey, false);
+}
+
+/**
+ * 전사가 끝났으면 세그먼트를 저장하고 아이템을 ready 로 바꾼다.
+ * 아직이면 false 를 돌려준다 — 호출부가 계속 폴링하면 된다.
+ */
+export async function collectTranscription(itemId: string, mediaKey: string): Promise<boolean> {
+  const token = await requireToken();
+  const state = await fetchTranscription(token, mediaKey, false);
+
+  if (state.status === 'processing') return false;
+
+  if (state.status === 'failed') {
+    await updateItem(itemId, { status: 'failed', statusError: state.error });
+    // 실패 결과도 회수해서 다음 전사 때 옛것을 보지 않게 한다.
+    await fetchTranscription(token, mediaKey, true).catch(() => {});
+    return true;
+  }
+
+  // 먼저 저장하고, 성공한 뒤에 임시 결과를 회수한다. 순서를 뒤집으면
+  // 저장이 실패했을 때 결과가 사라져 다시 전사해야 한다.
+  await replaceSegments(
+    itemId,
+    state.segments.map((seg) => ({
+      idx: seg.idx,
+      startSec: seg.startSec,
+      endSec: seg.endSec,
+      text: seg.text,
+      words: seg.words,
+    })),
+  );
+  const lastEnd = state.segments.at(-1)?.endSec;
+  await updateItem(itemId, {
+    status: 'ready',
+    statusError: null,
+    ...(typeof lastEnd === 'number' && lastEnd > 0 ? { durationSec: lastEnd } : {}),
+  });
+  await fetchTranscription(token, mediaKey, true).catch(() => {});
+  return true;
 }

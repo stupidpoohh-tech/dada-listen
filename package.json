@@ -12,7 +12,8 @@
     "typecheck": "tsc -b",
     "worker:dev": "npm run build && wrangler dev --local",
     "deploy": "npm run build && wrangler deploy",
-    "test:media": "bash scripts/test-media.sh"
+    "test:media": "bash scripts/test-media.sh",
+    "test:transcribe": "bash scripts/test-transcribe.sh"
   },
   "dependencies": {
     "@neondatabase/neon-js": "^0.7.0-beta",

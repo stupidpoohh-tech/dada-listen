@@ -14,6 +14,11 @@
 import { requireTeacherId } from './auth';
 import { errorResponse, json, HttpError } from './http';
 import {
+  startTranscription,
+  transcriptionCallback,
+  transcriptionResult,
+} from './transcribe';
+import {
   abortUpload,
   completeUpload,
   createPlaybackUrl,
@@ -32,10 +37,18 @@ export interface Env {
   NEON_DATA_API_URL: string;
   R2_BUCKET: string;
 
+  /** 전사 엔드포인트 재정의. 테스트 전용 — 평소엔 비워 둔다. */
+  DEEPGRAM_URL?: string;
+
   /** 비밀 (wrangler secret put). 없을 수 있으므로 optional 로 둔다. */
   DEEPGRAM_API_KEY?: string;
-  NEON_DATABASE_URL?: string;
   MEDIA_TOKEN_SECRET?: string;
+  /**
+   * 마이그레이션 적용용. Worker 는 쓰지 않는다 — 전사 결과도 클라이언트가
+   * 자기 세션으로 DB 에 쓴다. DB 자격증명을 Worker 에 두면 RLS 를 우회하는
+   * 경로가 생기므로 일부러 피했다 (transcribe.ts 상단 주석).
+   */
+  NEON_DATABASE_URL?: string;
 }
 
 /**
@@ -51,9 +64,9 @@ async function health(env: Env): Promise<Response> {
     r2 = 'error: ' + (e instanceof Error ? e.message : String(e));
   }
 
+  // Worker 가 실제로 쓰는 비밀만 ready 판정에 넣는다.
   const secrets = {
     DEEPGRAM_API_KEY: Boolean(env.DEEPGRAM_API_KEY),
-    NEON_DATABASE_URL: Boolean(env.NEON_DATABASE_URL),
     MEDIA_TOKEN_SECRET: Boolean(env.MEDIA_TOKEN_SECRET),
   };
   const ready = r2 === 'ok' && Object.values(secrets).every(Boolean);
@@ -67,6 +80,8 @@ async function health(env: Env): Promise<Response> {
       NEON_DATA_API_URL: Boolean(env.NEON_DATA_API_URL),
     },
     secrets,
+    // Worker 런타임에는 필요 없다. 마이그레이션을 돌릴 때만 쓴다.
+    optional: { NEON_DATABASE_URL: Boolean(env.NEON_DATABASE_URL) },
     note: ready
       ? '설정이 모두 갖춰졌습니다.'
       : '빠진 항목은 docs/setup.md 를 보세요. false 인 비밀은 wrangler secret put 으로 넣습니다.',
@@ -82,6 +97,11 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   // 재생만 서명 URL 로 연다. 로그인 토큰을 <audio src> 에 실을 수 없기 때문이다.
   if (path === '/api/media/stream' && method === 'GET') return stream(request, env, url);
 
+  // Deepgram 콜백. 사용자 세션이 없으므로 서명으로만 검증한다.
+  if (path === '/api/transcribe/callback' && method === 'POST') {
+    return transcriptionCallback(request, env, url);
+  }
+
   // 나머지 /api/media/* 는 전부 로그인한 강사만.
   if (path.startsWith('/api/media/')) {
     const ownerId = await requireTeacherId(request, env.NEON_DATA_API_URL);
@@ -96,7 +116,16 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
     if (path === '/api/media/delete' && method === 'POST') return deleteObject(request, env, ownerId);
   }
 
-  // 5단계에서 구현: /api/transcribe, /api/transcribe/callback
+  if (path.startsWith('/api/transcribe')) {
+    const ownerId = await requireTeacherId(request, env.NEON_DATA_API_URL);
+    if (path === '/api/transcribe' && method === 'POST') {
+      return startTranscription(request, env, ownerId, url.origin);
+    }
+    if (path === '/api/transcribe/result') {
+      return transcriptionResult(request, env, ownerId, url);
+    }
+  }
+
   if (path.startsWith('/api/')) {
     throw new HttpError(501, `아직 구현되지 않았습니다 (${path})`);
   }

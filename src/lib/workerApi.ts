@@ -1,8 +1,10 @@
-/* mediaApi.ts — 미디어 API 계약 (D-012).
+/* workerApi.ts — Worker API 계약.
+ *
+ * 미디어(D-012)와 전사(D-013)를 다룬다. store.ts 는 R2 도 Deepgram 도 모르고
+ * 아래 함수들만 안다 — 그게 이 파일의 존재 이유다.
  *
  * R2 는 Worker 에 바인딩으로 붙어 있어서 S3 서명 URL 을 만들 수 없다.
- * 그래서 업로드와 재생 모두 우리 Worker 를 지난다. 이 파일이 그 경계다 —
- * store.ts 는 R2 도 Worker 도 모르고 아래 함수들만 안다. */
+ * 그래서 업로드와 재생 모두 우리 Worker 를 지난다. */
 
 const BASE = import.meta.env.VITE_MEDIA_API_URL || '/api';
 
@@ -121,4 +123,60 @@ export function uploadPart(
     xhr.onabort = () => reject(new Error('업로드가 취소되었습니다'));
     xhr.send(blob);
   });
+}
+
+/* ------------------------------------------------------------------ *
+ * 전사 (D-013)
+ * ------------------------------------------------------------------ */
+
+export type TranscriptWord = { w: string; s: number | null; e: number | null };
+export type TranscriptSegment = {
+  idx: number;
+  startSec: number;
+  endSec: number;
+  text: string;
+  words: TranscriptWord[];
+};
+
+export type TranscriptionState =
+  | { status: 'processing' }
+  | { status: 'ready'; segments: TranscriptSegment[] }
+  | { status: 'failed'; error: string };
+
+/**
+ * 전사를 시작한다. 곧바로 돌아온다 — Deepgram 이 끝나면 Worker 로 콜백이 온다.
+ * 결과는 fetchTranscription 으로 가져간다.
+ */
+export function startTranscription(token: string, key: string): Promise<{ ok: true }> {
+  return call('/transcribe', token, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ key }),
+  });
+}
+
+/**
+ * 전사 결과를 확인한다. 아직이면 processing.
+ * consume=true 로 가져가면 Worker 가 임시 결과를 지운다 — DB 에 쓴 뒤에 쓴다.
+ */
+export async function fetchTranscription(
+  token: string,
+  key: string,
+  consume = false,
+): Promise<TranscriptionState> {
+  const q = new URLSearchParams({ key });
+  if (consume) q.set('consume', '1');
+  const res = await fetch(`${BASE}/transcribe/result?${q}`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  // 202 = 아직 처리 중. 오류가 아니다.
+  if (res.status === 202) return { status: 'processing' };
+  if (!res.ok) {
+    const detail = await res
+      .json()
+      .then((b: { error?: string }) => b.error)
+      .catch(() => '');
+    throw new Error(detail || `전사 상태 확인 실패 (${res.status})`);
+  }
+  return (await res.json()) as TranscriptionState;
 }
