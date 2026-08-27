@@ -238,11 +238,22 @@ PostgREST 호환이라 쿼리 표면(`.from().select().eq()`)이 동일하고, �
 있다(원본 앱 플레이스홀더가 "수능특강"). 서명 URL은 Range 요청과 문제없이 동작하므로
 `<audio src>`에 그대로 넣어 스트리밍한다. D-010의 판단은 유효하고 저장소만 바뀌었다.
 
-**서버가 하나 필요해졌다.** R2 자격증명으로 서명하려면 서버가 있어야 한다. Supabase
-Edge Functions가 하던 자리를 대체할 곳이 필요하고, R2 바인딩이 네이티브인
-**Cloudflare Workers**가 자연스럽다. 같은 자리에서 Deepgram 작업도 처리한다.
-클라이언트는 `mediaApi.ts`의 계약(`/media/upload-url`, `/media/play-url`,
-`/media/delete`)만 알고 R2를 모른다.
+**서버가 하나 필요해졌다.** Supabase Edge Functions가 하던 자리를 대체할 곳이
+필요하고, R2 바인딩이 네이티브인 **Cloudflare Workers**가 자연스럽다. 같은 자리에서
+Deepgram 작업도 처리한다. 클라이언트는 `mediaApi.ts`의 계약(`/media/upload-url`,
+`/media/play-url`, `/media/delete`)만 알고 R2를 모른다.
+
+**R2 자격증명은 쓰지 않는다 (확정).** Workers에 호스팅하므로 R2를 **바인딩**으로
+붙인다 — `env.MEDIA.get(key)`. access key / secret key를 만들 필요도, 어딘가에
+보관할 필요도 없다. 관리할 비밀이 하나 줄어드는 것 자체가 이득이다.
+
+바인딩은 Range 요청을 지원한다 (`R2GetOptions.range` 에 Headers를 넘기고
+`writeHttpMetadata` 로 응답 헤더를 채운다). 그래서 Worker가 206 Partial Content로
+직접 스트리밍할 수 있고, D-010의 "전체를 받아 Blob을 만들지 않는다"가 그대로 지켜진다.
+
+S3 서명 URL 대신 **Worker가 HMAC로 서명한 토큰**을 URL에 실어 검증한다.
+Deepgram이 파일을 받아갈 때도 이 URL을 쓴다 — 버킷은 계속 비공개다.
+필요한 비밀은 `MEDIA_TOKEN_SECRET` 하나뿐이다.
 
 **남은 숙제.** 무료 10GB도 200MB짜리 mp4 50개면 끝난다. 오디오만 뽑아 저장하면
 20분의 1이 되지만 ffmpeg를 돌릴 자리가 필요하다. 당장은 원본을 저장하고,

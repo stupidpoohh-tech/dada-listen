@@ -9,6 +9,7 @@ Cloudflare R2(미디어) · Deepgram(전사).
 - 서비스 정의와 결정 근거: [`docs/decisions.md`](docs/decisions.md)
 - 작업 지침: [`CLAUDE.md`](CLAUDE.md)
 - 스키마: [`db/migrations/`](db/migrations/)
+- **배포 준비 절차: [`docs/setup.md`](docs/setup.md)**
 - 원본 앱(디자인 정답지): [`_handoff/dada-listening-deploy.html`](_handoff/)
 
 ## 개발
@@ -27,6 +28,11 @@ npm run dev
 | `npm run build` | 타입 체크 + 프로덕션 빌드 (`dist/`) |
 | `npm test` | 단위 테스트 |
 | `npm run typecheck` | 타입 체크만 |
+| `npm run worker:dev` | Worker + 프론트엔드를 한 번에 로컬 실행 |
+| `npm run deploy` | Cloudflare Workers 배포 |
+
+배포 후 `/api/health` 를 열면 R2 바인딩과 비밀 설정 여부를 확인할 수 있습니다
+(값은 표시되지 않고 설정됐는지만 보여줍니다).
 
 > **주의.** Vite 는 `VITE_*` 값을 **빌드 시점에** 번들에 인라인한다. 배포
 > 대시보드의 환경변수는 런타임이 아니라 빌드에 필요하므로, 값을 바꾸면
@@ -77,6 +83,8 @@ src/
   styles/
     tokens.css      디자인 토큰의 단일 진실 (원본 :root 그대로)
     app.css         나머지 스타일 (원본 그대로)
+worker/
+  index.ts          Cloudflare Worker — 프론트 서빙 · 미디어 · 전사
 db/
   migrations/       스키마의 단일 진실
   tests/            RLS 회귀 테스트 (+ Neon 없이 돌리기 위한 스텁)
@@ -93,4 +101,4 @@ db/
 - [ ] 7단계 — 갭필 학습 UI (난이도, 객관식) ← 1차 배포 지점
 - [ ] 8단계 — 반 · 학생 · 과제 · 제출 현황
 - [ ] 9단계 — 기존 Firestore 데이터 이관
-- [ ] 10단계 — 배포 연결
+- [ ] 10단계 — 배포 연결 (`docs/setup.md`)

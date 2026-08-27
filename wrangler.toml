@@ -1,0 +1,45 @@
+# Cloudflare Workers 설정.
+#
+# 이 Worker 한 개가 세 가지를 한다:
+#   1. 빌드된 프론트엔드(dist/) 정적 서빙
+#   2. 미디어 업로드/재생 — R2 에 바인딩으로 직접 붙는다 (자격증명 불필요)
+#   3. Deepgram 전사 작업 시작과 콜백 수신
+#
+# 비밀은 여기 적지 않는다. `wrangler secret put` 으로 넣는다 — 아래 [비밀] 참조.
+
+name = "dada-listening"
+main = "worker/index.ts"
+compatibility_date = "2026-08-01"
+compatibility_flags = ["nodejs_compat"]
+
+# 빌드된 프론트엔드를 같은 Worker 에서 서빙한다. 별도 호스팅이 필요 없다.
+[assets]
+directory = "dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+# R2 버킷 바인딩.
+# 이것 덕분에 R2 access key / secret key 가 필요 없다. 코드에서 env.MEDIA 로 쓴다.
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "dada-media"
+
+# 공개돼도 되는 값. 브라우저 번들에 어차피 들어간다 — 권한은 RLS 가 막는다.
+# 대시보드가 아니라 여기에 두는 이유: 대시보드에 넣은 일반 변수는 배포할 때
+# 지워질 수 있다. 파일에 두면 배포와 함께 항상 같이 간다.
+[vars]
+NEON_AUTH_URL = "https://ep-little-recipe-azfa36uc.neonauth.c-3.ap-southeast-1.aws.neon.tech/neondb/auth"
+NEON_DATA_API_URL = "https://ep-little-recipe-azfa36uc.apirest.c-3.ap-southeast-1.aws.neon.tech/neondb/rest/v1"
+R2_BUCKET = "dada-media"
+
+# [비밀] 아래 셋은 `wrangler secret put <이름>` 으로 넣는다.
+# 암호화 비밀은 배포해도 지워지지 않는다 (일반 변수와 다른 점).
+#   wrangler secret put DEEPGRAM_API_KEY
+#   wrangler secret put NEON_DATABASE_URL
+#   wrangler secret put MEDIA_TOKEN_SECRET
+#
+# DEEPGRAM_API_KEY    Deepgram 콘솔에서 발급한 키
+# NEON_DATABASE_URL   Neon 연결 문자열. 전사 결과를 쓸 때만 쓴다 (사용자 세션이
+#                     없는 백그라운드 작업이라 Data API 대신 직접 연결한다).
+# MEDIA_TOKEN_SECRET  미디어 URL 서명용 임의 문자열. R2 를 공개하지 않고도
+#                     Deepgram 이 파일을 받아갈 수 있게 하는 열쇠다.
