@@ -1,43 +1,72 @@
-/* mediaApi.ts — R2 서명 URL 발급 (D-012).
+/* mediaApi.ts — 미디어 API 계약 (D-012).
  *
- * R2 자격증명으로 서명하려면 서버가 필요하다. 브라우저에 키를 둘 수 없으므로
- * 우리 API 에 물어보고 받은 URL 로만 올리고 재생한다.
- *
- * 엔드포인트 구현은 4단계에서 Deepgram 워커와 같은 자리에 붙인다.
- * 여기서는 계약만 정의한다 — store.ts 가 R2 를 어떻게 부르는지 몰라도 되게. */
+ * R2 는 Worker 에 바인딩으로 붙어 있어서 S3 서명 URL 을 만들 수 없다.
+ * 그래서 업로드와 재생 모두 우리 Worker 를 지난다. 이 파일이 그 경계다 —
+ * store.ts 는 R2 도 Worker 도 모르고 아래 함수들만 안다. */
 
 const BASE = import.meta.env.VITE_MEDIA_API_URL || '/api';
 
-async function post<T>(path: string, body: unknown, token: string): Promise<T> {
+/** 업로드 파트 크기. Worker 요청 본문 한도 아래로 넉넉히 잡는다. */
+export const PART_SIZE = 20 * 1024 * 1024;
+
+export type UploadedPart = { partNumber: number; etag: string };
+
+async function call<T>(path: string, token: string, init: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
-    method: 'POST',
+    ...init,
     headers: {
-      'content-type': 'application/json',
-      // 서버가 이 토큰을 검증해 소유자를 확인한다. 클라이언트가 주장하는
-      // owner_id 를 믿으면 남의 경로에 쓸 수 있다.
+      // 서버가 이 토큰으로 소유자를 확인한다. 클라이언트가 주장하는 id 는 믿지 않는다.
       authorization: `Bearer ${token}`,
+      ...(init.headers ?? {}),
     },
-    body: JSON.stringify(body),
   });
   if (!res.ok) {
-    const detail = await res.text().catch(() => '');
-    throw new Error(`미디어 API 오류 ${res.status}${detail ? ': ' + detail : ''}`);
+    const detail = await res
+      .json()
+      .then((b: { error?: string }) => b.error)
+      .catch(() => '');
+    throw new Error(detail || `미디어 API 오류 (${res.status})`);
   }
   return (await res.json()) as T;
 }
 
-/** 업로드용 서명 PUT URL. key 는 서버가 정해서 돌려준다. */
-export function createUploadUrl(
+/** 멀티파트 업로드를 연다. key 는 서버가 정해서 돌려준다. */
+export function createUpload(
   token: string,
   itemId: string,
   filename: string,
   contentType: string,
-): Promise<{ url: string; key: string }> {
-  return post('/media/upload-url', { itemId, filename, contentType }, token);
+): Promise<{ key: string; uploadId: string }> {
+  return call('/media/create', token, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ itemId, filename, contentType }),
+  });
+}
+
+export function completeUpload(
+  token: string,
+  key: string,
+  uploadId: string,
+  parts: UploadedPart[],
+): Promise<{ key: string; size: number }> {
+  return call('/media/complete', token, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ key, uploadId, parts }),
+  });
+}
+
+export function abortUpload(token: string, key: string, uploadId: string): Promise<void> {
+  return call<{ ok: true }>('/media/abort', token, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ key, uploadId }),
+  }).then(() => undefined);
 }
 
 /**
- * 재생용 서명 GET URL.
+ * 재생용 서명 URL.
  * 이 URL 을 그대로 <audio src> 에 넣는다 — 브라우저가 Range 로 스트리밍한다.
  * 전체를 받아 Blob 을 만들지 않는다 (원본 앱의 실수).
  */
@@ -45,9 +74,51 @@ export function createPlaybackUrl(
   token: string,
   key: string,
 ): Promise<{ url: string; expiresIn: number }> {
-  return post('/media/play-url', { key }, token);
+  return call('/media/play-url', token, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ key }),
+  });
 }
 
 export function deleteObject(token: string, key: string): Promise<void> {
-  return post('/media/delete', { key }, token).then(() => undefined);
+  return call<{ ok: true }>('/media/delete', token, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ key }),
+  }).then(() => undefined);
+}
+
+/** 파트 하나를 올린다. 진행률 때문에 fetch 가 아니라 XHR 을 쓴다. */
+export function uploadPart(
+  token: string,
+  key: string,
+  uploadId: string,
+  partNumber: number,
+  blob: Blob,
+  onProgress?: (loadedBytes: number) => void,
+): Promise<UploadedPart> {
+  const q = new URLSearchParams({ key, uploadId, partNumber: String(partNumber) });
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', `${BASE}/media/part?${q}`);
+    xhr.setRequestHeader('authorization', `Bearer ${token}`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(e.loaded);
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText) as UploadedPart);
+        } catch {
+          reject(new Error('업로드 응답을 읽지 못했습니다'));
+        }
+      } else {
+        reject(new Error(`파트 ${partNumber} 업로드 실패 (${xhr.status})`));
+      }
+    };
+    xhr.onerror = () => reject(new Error('업로드 중 네트워크 오류'));
+    xhr.onabort = () => reject(new Error('업로드가 취소되었습니다'));
+    xhr.send(blob);
+  });
 }

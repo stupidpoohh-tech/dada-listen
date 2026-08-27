@@ -8,7 +8,16 @@
  * DB 는 snake_case, 앱은 camelCase. 변환은 이 파일 안에서만 한다. */
 
 import { db } from './db';
-import { createPlaybackUrl, createUploadUrl, deleteObject } from './mediaApi';
+import {
+  PART_SIZE,
+  abortUpload,
+  completeUpload,
+  createPlaybackUrl,
+  createUpload,
+  deleteObject,
+  uploadPart,
+  type UploadedPart,
+} from './mediaApi';
 import type { Level } from './gapfill';
 import type {
   AuthUser,
@@ -343,6 +352,10 @@ const urlCache = new Map<string, { url: string; expiresAt: number }>();
 /**
  * 파일을 R2 에 올리고 오브젝트 키를 돌려준다.
  * 키는 서버가 정한다 — 클라이언트가 경로를 정하면 남의 폴더에 쓸 수 있다.
+ *
+ * 항상 멀티파트로 올린다. 강사가 올리는 건 200MB 짜리 영상일 수 있는데
+ * 한 번에 보내면 Worker 요청 본문 한도를 넘는다. 파트를 나누면 크기 제한이
+ * 사라지고 코드 경로도 하나로 유지된다.
  */
 export async function uploadMedia(
   itemId: string,
@@ -351,42 +364,37 @@ export async function uploadMedia(
 ): Promise<string> {
   const token = await requireToken();
   const contentType = resolveMime(file);
-  const { url, key } = await createUploadUrl(token, itemId, file.name, contentType);
+  const { key, uploadId } = await createUpload(token, itemId, file.name, contentType);
 
-  await putWithProgress(url, file, contentType, onProgress);
+  try {
+    const total = Math.max(1, Math.ceil(file.size / PART_SIZE));
+    const done: UploadedPart[] = [];
+    // 이미 끝난 파트들의 바이트 합. 진행률을 파일 전체 기준으로 계산한다.
+    let settledBytes = 0;
+
+    for (let i = 0; i < total; i++) {
+      const start = i * PART_SIZE;
+      const chunk = file.slice(start, Math.min(start + PART_SIZE, file.size));
+      const part = await uploadPart(token, key, uploadId, i + 1, chunk, (loaded) => {
+        onProgress?.(Math.min(1, (settledBytes + loaded) / Math.max(1, file.size)));
+      });
+      settledBytes += chunk.size;
+      done.push(part);
+      onProgress?.(Math.min(1, settledBytes / Math.max(1, file.size)));
+    }
+
+    await completeUpload(token, key, uploadId, done);
+  } catch (e) {
+    // 중단된 멀티파트는 R2 에 조각으로 남아 용량을 먹는다. 정리하고 던진다.
+    await abortUpload(token, key, uploadId).catch(() => {});
+    throw e;
+  }
 
   const { error } = await db.from('items').update({ media_key: key, mime: contentType }).eq('id', itemId);
   if (error) throw error;
 
   urlCache.delete(key);
   return key;
-}
-
-/**
- * XHR 을 쓰는 이유는 진행률 때문이다. fetch 는 업로드 진행률을 주지 않는데,
- * 수백 MB 짜리 영상을 올리는 동안 아무 표시가 없으면 멈춘 것처럼 보인다.
- */
-function putWithProgress(
-  url: string,
-  file: File,
-  contentType: string,
-  onProgress?: (fraction: number) => void,
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('PUT', url);
-    xhr.setRequestHeader('content-type', contentType);
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
-    };
-    xhr.onload = () =>
-      xhr.status >= 200 && xhr.status < 300
-        ? resolve()
-        : reject(new Error(`업로드 실패 (${xhr.status})`));
-    xhr.onerror = () => reject(new Error('업로드 중 네트워크 오류'));
-    xhr.onabort = () => reject(new Error('업로드가 취소되었습니다'));
-    xhr.send(file);
-  });
 }
 
 /**

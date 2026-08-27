@@ -30,6 +30,7 @@ npm run dev
 | `npm run typecheck` | 타입 체크만 |
 | `npm run worker:dev` | Worker + 프론트엔드를 한 번에 로컬 실행 |
 | `npm run deploy` | Cloudflare Workers 배포 |
+| `npm run test:media` | 미디어 엔드포인트 종단 테스트 (업로드·Range·서명·격리) |
 
 배포 후 `/api/health` 를 열면 R2 바인딩과 비밀 설정 여부를 확인할 수 있습니다
 (값은 표시되지 않고 설정됐는지만 보여줍니다).
@@ -86,7 +87,11 @@ src/
     tokens.css      디자인 토큰의 단일 진실 (원본 :root 그대로)
     app.css         나머지 스타일 (원본 그대로)
 worker/
-  index.ts          Cloudflare Worker — 프론트 서빙 · 미디어 · 전사
+  index.ts          라우터 + /api/health
+  auth.ts           토큰의 주인 확인 (Neon 에 whoami 로 물어본다)
+  media.ts          R2 업로드(멀티파트) · Range 스트리밍 · 삭제
+  sign.ts           재생 URL HMAC 서명
+  tests/            종단 테스트 + Neon 스텁
 db/
   migrations/       스키마의 단일 진실
   tests/            RLS 회귀 테스트 (+ Neon 없이 돌리기 위한 스텁)
@@ -97,7 +102,8 @@ db/
 - [x] 1단계 — 스캐폴딩 + 스키마 + RLS 테스트
 - [x] 2단계 — gapfill 이식 + 알고리즘 개선 + 테스트
 - [x] 3단계 — store + R2 스트리밍 + 강사 인증
-- [ ] 4단계 — Cloudflare Worker: R2 서명 URL + Deepgram 전사 → 세그먼트
+- [x] 4단계 (앞) — Worker 미디어 계층: 멀티파트 업로드 · Range 스트리밍 · 서명 URL
+- [ ] 4단계 (뒤) — Deepgram 전사 → 세그먼트
 - [ ] 5단계 — 업로드/스크립트 교정 UI
 - [ ] 6단계 — 플레이어 + 타임스탬프 기능
 - [ ] 7단계 — 갭필 학습 UI (난이도, 객관식) ← 1차 배포 지점
