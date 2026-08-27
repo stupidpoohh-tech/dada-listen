@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Login from './components/Login';
 import { Ic, fmt } from './components/icons';
-import { listFolders, listItems, onAuthChange, signOut } from './lib/store';
+import { ensureTeacher, listFolders, listItems, onAuthChange, signOut } from './lib/store';
 import type { AuthUser, Folder, Item } from './lib/types';
 
 /** 상태 배지 문구. ASR 파이프라인이 붙으면 실제로 움직인다 (D-002). */
@@ -69,6 +69,11 @@ export default function App() {
     setLoaded(false);
     void (async () => {
       try {
+        // 강사 프로필을 먼저 만든다. teachers 행이 없으면 owner_id 는 채워져도
+        // 승인 여부(teachers.approved)를 볼 데가 없어서 업로드가 막힌다.
+        // upsert 라 두 번째 로그인부터는 아무 일도 하지 않는다.
+        await ensureTeacher(user.email?.split('@')[0] ?? '강사');
+
         const [f, i] = await Promise.all([listFolders(), listItems()]);
         if (!alive) return;
         setFolders(f);

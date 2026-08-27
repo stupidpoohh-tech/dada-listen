@@ -70,37 +70,49 @@ psql "$NEON_DATABASE_URL" -f db/tests/rls_test.sql
 **Neon 콘솔의 Create user 로는 로그인할 수 없습니다.** 이메일과 이름만 받고
 비밀번호를 만들지 않기 때문입니다. 비밀번호는 앱의 가입 경로로만 생깁니다.
 
-1. 콘솔에서 이미 만든 사용자가 있으면 **먼저 지웁니다** (사용자 행의 ⋮ → Delete).
+1. 콘솔에 이미 만든 사용자가 있으면 **먼저 지웁니다** (사용자 행의 ⋮ → Delete).
    같은 이메일이 남아 있으면 가입이 충돌합니다.
-2. 배포된 앱에서 우측 상단 **관리자** → **처음이신가요? 관리자 계정 만들기**
-3. 이메일·비밀번호(8자 이상)·이름을 넣고 **계정 만들고 시작하기**
+2. 배포된 앱 → 우측 상단 **관리자** → **처음이신가요? 관리자 계정 만들기**
+3. 이메일 · 비밀번호(8자 이상) · 이름을 넣고 **계정 만들고 시작하기**
+4. 로그인되면 화면이 뜹니다. 이때 `teachers` 행이 자동으로 만들어집니다.
 
 학생은 이 화면을 쓰지 않습니다. 반 코드로 들어옵니다 (D-005).
 
-### ⚠️ 가입이 공개되어 있습니다
+### 로그인한 뒤 자기 자신을 승인
+
+가입은 되지만 **업로드와 전사는 아직 막혀 있습니다.** 아래 이유 때문입니다.
+
+SQL Editor 에서 (id 를 찾아 넣을 필요 없습니다 — 강사가 한 명이니까요):
+
+```sql
+update public.teachers set approved = true;
+
+select id, name, approved from public.teachers;
+```
+
+두 번째 줄에서 `approved = true` 인 행이 하나 보이면 끝입니다.
+
+> **순서가 중요합니다.** 로그인을 한 번 해야 `teachers` 행이 생깁니다.
+> 로그인 전에 이 UPDATE 를 돌리면 고칠 행이 없어 아무 일도 일어나지 않습니다
+> (에러도 안 납니다). 그럴 땐 로그인한 뒤 다시 돌리면 됩니다.
+
+### ⚠️ 왜 승인이 필요한가
 
 Neon Auth 콘솔에 이렇게 적혀 있습니다 — *"Anyone on the web can sign up for
-your app. Support for restricted signups is coming soon."* 아직 막을 방법이
-없습니다.
+your app. Support for restricted signups is coming soon."* 아직 막을 방법이 없습니다.
 
 RLS 덕분에 낯선 사람이 가입해도 **남의 자료는 못 봅니다.** 다만 자기 공간에서
 업로드하고 전사를 돌릴 수는 있고, 그러면 R2 용량과 Deepgram 크레딧이 남의 손에
 나갑니다.
 
-그래서 `teachers.approved` 를 뒀습니다. 기본값은 `false` 이고, 승인된 강사만
-업로드·전사를 할 수 있습니다. 로그인과 목록 보기는 막지 않습니다.
+그래서 `teachers.approved` 기본값을 `false` 로 두고, 승인된 강사만 업로드·전사를
+할 수 있게 했습니다. 로그인과 목록 보기는 막지 않습니다.
 
-**계정을 만든 뒤 자기 자신을 승인하세요** (SQL Editor):
+나중에 동료 강사가 생기면 그때는 id 를 지정해서 켜면 됩니다:
 
 ```sql
--- 내 계정 확인
-select id, name, approved from public.teachers;
-
--- 승인
-update public.teachers set approved = true where id = '<위에서 본 id>';
+update public.teachers set approved = true where id = '<그 강사 id>';
 ```
-
-나중에 동료 강사가 생기면 같은 방법으로 켜주면 됩니다.
 
 ## 4. Deepgram 키 발급
 
