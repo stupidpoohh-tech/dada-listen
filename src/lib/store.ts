@@ -44,10 +44,43 @@ type SessionUser = { id: string; email?: string | null } | null | undefined;
 const toAuthUser = (u: SessionUser): AuthUser | null =>
   u ? { id: u.id, email: u.email ?? null } : null;
 
-export function onAuthChange(cb: (user: AuthUser | null) => void): () => void {
-  const { data } = db.auth.onAuthStateChange((_e, session) => {
-    cb(toAuthUser(session?.user));
-  });
+/**
+ * 로그인 상태 구독.
+ *
+ * **SDK 의 onAuthStateChange 만으로는 부족하다.** 그 콜백은 오직
+ * BroadcastChannel 핸들러에서만 불리는데, 그 핸들러는 맨 앞에서
+ * `if (message.clientId === CURRENT_TAB_CLIENT_ID) return;` 으로 자기 탭을
+ * 걸러낸다. 즉 **로그인한 바로 그 탭에는 아무 통지도 오지 않는다** — 다른 탭에만
+ * 간다. 그래서 로그인 버튼을 눌러도 화면이 그대로였고, 새로 열면 (구독 시점의
+ * 최초 통지 덕에) 로그인돼 있었다. (D-016)
+ *
+ * 그래서 이 탭의 전환은 우리가 직접 알린다. SDK 구독은 다른 탭의 로그인·로그아웃을
+ * 따라가는 용도로만 남긴다.
+ */
+type AuthListener = (user: AuthUser | null) => void;
+
+const authListeners = new Set<AuthListener>();
+let sdkAuthSubscribed = false;
+
+function publishAuth(user: AuthUser | null): void {
+  for (const cb of [...authListeners]) {
+    try {
+      cb(user);
+    } catch (e) {
+      console.error('[auth]', e);
+    }
+  }
+}
+
+export function onAuthChange(cb: AuthListener): () => void {
+  authListeners.add(cb);
+
+  // 다른 탭에서 일어난 전환. 앱 수명 내내 하나면 된다.
+  if (!sdkAuthSubscribed) {
+    sdkAuthSubscribed = true;
+    db.auth.onAuthStateChange((_e, session) => publishAuth(toAuthUser(session?.user)));
+  }
+
   // 이미 저장된 세션이 있으면 즉시 알려준다 (원본의 setPersistence(LOCAL) 체감).
   // 실패해도 반드시 한 번은 콜백해야 한다. 안 그러면 호출부가 "인증 확인 중"에
   // 영영 갇혀서, 네트워크가 끊겼을 때 이유 없는 로딩 화면만 남는다.
@@ -55,12 +88,18 @@ export function onAuthChange(cb: (user: AuthUser | null) => void): () => void {
     .getSession()
     .then(({ data: d }) => cb(toAuthUser(d.session?.user)))
     .catch(() => cb(null));
-  return () => data.subscription.unsubscribe();
+
+  return () => {
+    authListeners.delete(cb);
+  };
 }
 
 export async function signIn(email: string, password: string): Promise<void> {
-  const { error } = await db.auth.signInWithPassword({ email, password });
+  const { data, error } = await db.auth.signInWithPassword({ email, password });
   if (error) throw error;
+  // 이전 사용자의 토큰이 남지 않게. 계정을 바꿔 로그인하면 남의 토큰으로 요청한다.
+  clearDataApiToken();
+  publishAuth(toAuthUser(data?.session?.user ?? data?.user));
 }
 
 /**
@@ -82,7 +121,12 @@ export async function signUpTeacher(
   });
   if (error) throw error;
   // 이메일 확인이 켜져 있으면 가입은 되지만 세션이 없다. 호출부가 알아야 한다.
-  return { signedIn: Boolean(data?.session) };
+  const signedIn = Boolean(data?.session);
+  if (signedIn) {
+    clearDataApiToken();
+    publishAuth(toAuthUser(data?.session?.user ?? data?.user));
+  }
+  return { signedIn };
 }
 
 export async function signOut(): Promise<void> {
@@ -90,6 +134,7 @@ export async function signOut(): Promise<void> {
   clearDataApiToken();
   const { error } = await db.auth.signOut();
   if (error) throw error;
+  publishAuth(null);
 }
 
 export async function resetPassword(email: string): Promise<void> {

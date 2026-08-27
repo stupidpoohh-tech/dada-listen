@@ -45,13 +45,36 @@ export async function requireTeacher(request: Request, dataApiUrl: string): Prom
     throw new HttpError(503, '인증 서버에 연결할 수 없습니다');
   }
 
-  if (!res.ok) throw new HttpError(401, '로그인이 만료되었습니다. 다시 로그인해 주세요');
+  // 여기서 아무 실패나 "로그인이 만료되었습니다" 로 뭉뚱그리면 안 된다.
+  // 실제로 그랬다가, whoami() 가 없어서 나는 404 도 만료로 보여 두 번을 헤맸다.
+  // 토큰이 거절된 것(401)만 만료다. 나머지는 설정이나 스키마 문제이므로
+  // Data API 가 뭐라고 했는지 그대로 들고 나간다.
+  if (res.status === 401) {
+    throw new HttpError(401, '로그인이 만료되었습니다. 다시 로그인해 주세요');
+  }
+  if (!res.ok) {
+    const detail = (await res.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 300);
+    throw new HttpError(
+      500,
+      `신원 확인에 실패했습니다 (Data API ${res.status}) — ${detail || '응답 본문이 비어 있습니다'}`,
+    );
+  }
 
   // whoami() 는 {id, approved} jsonb 를 돌려준다.
-  const body = (await res.json()) as { id?: unknown; approved?: unknown } | null;
+  const raw: unknown = await res.json().catch(() => null);
+  const body =
+    typeof raw === 'object' && raw !== null
+      ? (raw as { id?: unknown; approved?: unknown })
+      : null;
   const id = body?.id;
   if (typeof id !== 'string' || id.length === 0) {
-    throw new HttpError(401, '로그인이 필요합니다');
+    // 200 인데 모양이 다르다 = 토큰 문제가 아니라 whoami() 가 옛 버전이다
+    // (0002 의 text 반환본). 0003 을 돌리지 않으면 이 길로 온다.
+    throw new HttpError(
+      500,
+      `whoami() 응답이 예상과 다릅니다 — ${JSON.stringify(raw)?.slice(0, 200)}. ` +
+        'db/migrations/0003_approved_teacher.sql 을 돌렸는지 확인해 주세요.',
+    );
   }
   const teacher: Teacher = { id, approved: body?.approved === true };
 

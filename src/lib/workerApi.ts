@@ -116,7 +116,15 @@ export function uploadPart(
           reject(new Error('업로드 응답을 읽지 못했습니다'));
         }
       } else {
-        reject(new Error(`파트 ${partNumber} 업로드 실패 (${xhr.status})`));
+        // 서버가 이유를 적어 보냈으면 그걸 보여준다. 상태 코드만으로는
+        // 무엇을 고쳐야 할지 알 수 없다.
+        let detail = '';
+        try {
+          detail = (JSON.parse(xhr.responseText) as { error?: string }).error ?? '';
+        } catch {
+          /* 본문이 JSON 이 아니면 상태 코드만 쓴다 */
+        }
+        reject(new Error(detail || `파트 ${partNumber} 업로드 실패 (${xhr.status})`));
       }
     };
     xhr.onerror = () => reject(new Error('업로드 중 네트워크 오류'));

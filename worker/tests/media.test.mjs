@@ -105,6 +105,42 @@ const unapprovedCreate = await (await fetch(`${B}/api/media/create`, {
 check('미승인 계정은 업로드를 시작할 수 없다', unapprovedCreate.error !== undefined,
   unapprovedCreate.error ?? '허용됨 — 크레딧 위험');
 
+// --- 실패는 사실대로 말해야 한다 ---
+//
+// 예전에는 Data API 가 뭐라고 답하든 전부 "로그인이 만료되었습니다" 였다.
+// 그래서 whoami() 가 없어 나는 404 도 만료로 보였고, 사용자는 로그인만
+// 반복하며 두 번을 헤맸다. 원인이 화면에 드러나는지 여기서 지킨다.
+const noFunc = await (await fetch(`${B}/api/media/create`, {
+  method:'POST', headers:T('nofunc'),
+  body: JSON.stringify({ itemId: ITEM, filename:'x.mp3', contentType:'audio/mpeg' })
+})).json();
+check('whoami() 404 를 만료로 속이지 않는다',
+  typeof noFunc.error === 'string'
+  && !noFunc.error.includes('만료')
+  && noFunc.error.includes('404'),
+  noFunc.error);
+check('404 응답에 Data API 가 말한 이유가 실린다',
+  typeof noFunc.error === 'string' && noFunc.error.includes('schema cache'),
+  noFunc.error);
+
+const oldShape = await (await fetch(`${B}/api/media/create`, {
+  method:'POST', headers:T('oldshape'),
+  body: JSON.stringify({ itemId: ITEM, filename:'x.mp3', contentType:'audio/mpeg' })
+})).json();
+check('whoami() 가 옛 모양이면 그렇게 말한다',
+  typeof oldShape.error === 'string'
+  && !oldShape.error.includes('만료')
+  && oldShape.error.includes('0003'),
+  oldShape.error);
+
+const badToken = await (await fetch(`${B}/api/media/create`, {
+  method:'POST', headers:T('bad'),
+  body: JSON.stringify({ itemId: ITEM, filename:'x.mp3', contentType:'audio/mpeg' })
+})).json();
+check('진짜 401 만 만료로 안내한다',
+  typeof badToken.error === 'string' && badToken.error.includes('만료'),
+  badToken.error);
+
 // --- 삭제 ---
 const del = await (await fetch(`${B}/api/media/delete`, {
   method:'POST', headers:T('teacher_A'), body: JSON.stringify({ key: small.key })

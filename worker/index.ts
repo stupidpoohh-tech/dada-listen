@@ -64,6 +64,26 @@ async function health(env: Env): Promise<Response> {
     r2 = 'error: ' + (e instanceof Error ? e.message : String(e));
   }
 
+  // whoami() 에 실제로 닿는지 본다. 토큰 없이 부르므로 인증은 당연히 거절되는데,
+  // 그 **거절의 종류**가 답이다. 404(PGRST202)면 함수가 없거나 Data API 의
+  // 스키마 캐시가 옛것이라는 뜻이고, 401/403 이면 함수는 제자리에 있다는 뜻이다.
+  // 업로드가 죽었을 때 로그인 없이 확인할 수 있는 유일한 자리라 여기 둔다.
+  let whoami: string;
+  try {
+    const r = await fetch(`${(env.NEON_DATA_API_URL ?? '').replace(/\/$/, '')}/rpc/whoami`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: '{}',
+    });
+    whoami =
+      r.status === 404
+        ? '404 — 함수를 찾을 수 없습니다. 0002·0003 마이그레이션을 돌렸는지, ' +
+          "그리고 Data API 스키마 캐시가 갱신됐는지 확인하세요 (notify pgrst, 'reload schema')."
+        : `${r.status} — 함수는 있습니다 (토큰이 없어 거절된 것은 정상)`;
+  } catch (e) {
+    whoami = 'error: ' + (e instanceof Error ? e.message : String(e));
+  }
+
   // Worker 가 실제로 쓰는 비밀만 ready 판정에 넣는다.
   const secrets = {
     DEEPGRAM_API_KEY: Boolean(env.DEEPGRAM_API_KEY),
@@ -74,6 +94,7 @@ async function health(env: Env): Promise<Response> {
   return json({
     ready,
     r2,
+    whoami,
     bucket: env.R2_BUCKET,
     vars: {
       NEON_AUTH_URL: Boolean(env.NEON_AUTH_URL),

@@ -9,6 +9,26 @@ createServer((req, res) => {
     const auth = req.headers.authorization || '';
     const token = auth.replace(/^Bearer\s+/i, '');
     if (!token || token === 'bad') { res.writeHead(401).end('{}'); return; }
+
+    // whoami() 가 아예 없는 경우. 마이그레이션을 안 돌렸거나 Data API 의
+    // 스키마 캐시가 옛것일 때 PostgREST 가 이렇게 답한다. 이걸 "로그인 만료"로
+    // 뭉뚱그리면 원인을 못 찾는다 — 그래서 테스트로 붙잡아 둔다.
+    if (token === 'nofunc') {
+      res.writeHead(404, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        code: 'PGRST202',
+        message: 'Could not find the function public.whoami without parameters in the schema cache',
+      }));
+      return;
+    }
+
+    // 0003 을 안 돌려 whoami() 가 아직 text 를 돌려주는 경우.
+    if (token === 'oldshape') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify('teacher_A'));
+      return;
+    }
+
     res.writeHead(200, { 'content-type': 'application/json' });
     // whoami() 는 {id, approved} 를 돌려준다.
     // 토큰이 'unapproved' 로 시작하면 미승인 계정을 흉내낸다.
