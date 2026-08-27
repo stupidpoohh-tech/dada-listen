@@ -18,6 +18,12 @@ directory = "dist"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
 
+# ⚠️ 이 줄이 없으면 Worker 코드가 아예 실행되지 않는다.
+# 기본 순서는 "정적 자산 먼저, 없으면 Worker" 인데, not_found_handling 이
+# single-page-application 이면 매칭되지 않는 모든 경로가 index.html 로 떨어진다.
+# 즉 /api/health 도 앱 화면이 나온다. run_worker_first 로 그 경로만 순서를 뒤집는다.
+run_worker_first = ["/api/*"]
+
 # R2 버킷 바인딩.
 # 이것 덕분에 R2 access key / secret key 가 필요 없다. 코드에서 env.MEDIA 로 쓴다.
 [[r2_buckets]]
