@@ -91,6 +91,7 @@ src/
     Login.tsx       강사 로그인 · 첫 계정 만들기
     UploadModal.tsx 업로드 → 전사 → 스크립트 미리보기
     TrimPanel.tsx   긴 음원에서 문제 하나만 떼어내기
+    ItemCard.tsx    목록 한 줄 · 플레이어 · 지문/갭필 (문장 클릭 반복)
     icons.tsx       원본의 인라인 SVG
   styles/
     tokens.css      디자인 토큰의 단일 진실 (원본 :root 그대로)

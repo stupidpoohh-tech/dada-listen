@@ -5,8 +5,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Login from './components/Login';
-import { Ic, fmt } from './components/icons';
+import { Ic } from './components/icons';
 import UploadModal from './components/UploadModal';
+import ItemCard from './components/ItemCard';
 import {
   collectTranscription,
   ensureTeacher,
@@ -298,37 +299,14 @@ export default function App() {
                 <span className="h">{heading}</span>
                 <span className="c">{visible.length}개</span>
               </div>
-              {visible.map((it) => {
-                const folder = folderOf(it.folderId);
-                const status = STATUS_LABEL[it.status];
-                return (
-                  <div className="card" key={it.id}>
-                    <div className="card-head">
-                      <button className="play-btn" aria-label="재생"><Ic.play s={22} /></button>
-                      <div className="card-meta">
-                        <div className="card-title">{it.title}</div>
-                        <div className="card-sub">
-                          {folder && (
-                            <span className="pill" style={{ color: folder.color }}>{folder.name}</span>
-                          )}
-                          <span>{fmt(it.durationSec ?? 0)}</span>
-                          {status && <span className="pill">{status}</span>}
-                          {it.tags.slice(0, 3).map((t) => (
-                            <span key={t} className="tg">#{t}</span>
-                          ))}
-                        </div>
-                      </div>
-                      <button
-                        className="icon-btn"
-                        style={{ border: 'none', boxShadow: 'none', background: 'transparent' }}
-                        aria-label="펼치기"
-                      >
-                        <span className="chev"><Ic.chev /></span>
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
+              {visible.map((it) => (
+                <ItemCard
+                  key={it.id}
+                  item={it}
+                  folder={folderOf(it.folderId)}
+                  statusLabel={STATUS_LABEL[it.status]}
+                />
+              ))}
             </div>
           )}
         </div>
