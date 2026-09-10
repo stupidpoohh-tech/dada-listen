@@ -13,6 +13,10 @@
 --   psql "$NEON_DATABASE_URL" -X -f db/checks/p0_verify.sql
 --   또는 Neon SQL Editor 에 통째로 붙여넣기
 --
+-- **문장이 하나다.** 웹 SQL Editor 는 여러 문장을 넣으면 마지막 결과만 보여줄
+-- 수 있어서, 검사표가 통째로 안 보이는 일이 없도록 하나로 합쳐 두었다.
+-- 승인 계정 수는 db/checks/approved_audit.sql 에서 본다.
+--
 -- 판정: "결과" 열에 FAIL 이 하나도 없어야 한다.
 --       "확인불가" 는 통과가 아니다 — 무엇이 없는지 상세를 보고 해결한다.
 
@@ -216,14 +220,3 @@ r(sort_key, 구분, 항목, 결과, 상세) as (
   ) cnt
 )
 select 구분, 항목, 결과, 상세 from r order by sort_key;
-
--- 승인 현황 (숫자만. 이름·id 는 내지 않는다).
---
--- 위 검사와 한 쿼리로 묶지 않는다. public.teachers 를 직접 참조하는데, 테이블이
--- 없는 DB 에서는 파싱 단계에서 쿼리 전체가 죽어 **정작 진단이 필요한 상황에서
--- 아무것도 못 보게 된다.** 따로 두면 위 표는 그대로 나온다.
-select
-  count(*) filter (where approved) as "승인됨",
-  count(*)                         as "전체 강사",
-  '목록은 db/checks/approved_audit.sql 로 관리자가 검토' as "비고"
-from public.teachers;

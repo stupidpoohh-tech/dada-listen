@@ -27,10 +27,3 @@ select
   end as "메모"
 from public.teachers t
 order by t.approved desc, t.created_at;
-
--- 요약
-select
-  count(*)                                  as "전체 강사",
-  count(*) filter (where approved)          as "승인됨",
-  count(*) filter (where not approved)      as "미승인"
-from public.teachers;

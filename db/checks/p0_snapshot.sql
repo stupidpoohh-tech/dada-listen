@@ -1,47 +1,63 @@
--- p0_snapshot — 0005 적용 **전** 상태를 기록해 둔다 (읽기 전용)
+-- p0_snapshot — 0005 적용 **전** 권한 상태를 기록해 둔다 (읽기 전용)
 --
 -- 왜 필요한가: 적용 후에 "무엇이 바뀌었나"를 비교할 기준이 있어야 하고,
 -- 되돌려야 할 때 원래 권한 모양을 알아야 한다.
 --
--- 사용법 — 결과를 **로컬 파일로** 남긴다. Git 이나 채팅에 올리지 않는다.
---   psql "$NEON_DATABASE_URL" -X -f db/checks/p0_snapshot.sql > ~/p0_before.txt
+-- 이 스크립트는 강사 이름·id 를 출력하지 않는다. 승인 상태 자체는
+-- db/checks/approved_audit.sql 로 따로 본다.
 --
--- 이 스크립트는 강사 이름·id 를 출력하지 않는다 (숫자만).
--- 개별 목록이 필요하면 db/checks/approved_audit.sql 을 따로, 로컬에만 남긴다.
+-- **문장이 하나다.** 웹 SQL Editor 는 여러 문장을 넣으면 마지막 결과만
+-- 보여줄 수 있고, psql 전용 명령(\echo 등)은 아예 오류가 난다. 그래서
+-- 전부 한 개의 SELECT 로 합쳤다.
+--
+-- 결과를 파일로 저장해 두고, 적용 후 같은 것을 다시 돌려 비교한다.
 
-\echo '===== teachers 테이블 권한 (relacl) ====='
-select relname as "테이블", coalesce(array_to_string(relacl, E'\n'), '(기본값)') as "ACL"
-from pg_class where oid = 'public.teachers'::regclass;
+with t as (select to_regclass('public.teachers') as oid)
+select 구분, 이름, 내용 from (
 
-\echo '===== teachers 컬럼 권한 (attacl) ====='
-select a.attname as "컬럼", coalesce(array_to_string(a.attacl, E'\n'), '(없음)') as "컬럼 ACL"
-from pg_attribute a
-where a.attrelid = 'public.teachers'::regclass and a.attnum > 0 and not a.attisdropped
-order by a.attnum;
+  -- 테이블 단위 권한. 적용 전에는 authenticated=arwd (a=insert, w=update) 가
+  -- 보이고, 적용 후에는 authenticated=rd 만 남아야 한다.
+  select 1 as sort, '테이블 권한' as 구분, c.relname::text as 이름,
+         coalesce(array_to_string(c.relacl, E'\n'), '(기본값 — 부여된 권한 없음)') as 내용
+  from pg_class c, t where c.oid = t.oid
 
-\echo '===== teachers 트리거 ====='
-select tgname as "트리거", tgenabled as "상태", pg_get_triggerdef(oid) as "정의"
-from pg_trigger
-where tgrelid = 'public.teachers'::regclass and not tgisinternal;
+  union all
+  -- 컬럼 단위 권한. 적용 후에는 id=a, name=aw 만 있고
+  -- approved 와 created_at 에는 아무 권한도 없어야 한다.
+  select 2, '컬럼 권한', a.attname::text,
+         coalesce(array_to_string(a.attacl, E'\n'), '(없음)')
+  from pg_attribute a, t
+  where a.attrelid = t.oid and a.attnum > 0 and not a.attisdropped
 
-\echo '===== 관련 함수 정의 ====='
-select p.proname as "함수",
-       p.prosecdef as "security definer",
-       coalesce(array_to_string(p.proacl, E'\n'), '(기본값: PUBLIC 실행 가능)') as "실행 권한",
-       pg_get_functiondef(p.oid) as "정의"
-from pg_proc p
-join pg_namespace n on n.oid = p.pronamespace
-where n.nspname = 'public'
-  and p.proname in ('whoami', 'admin_set_teacher_approval', 'teachers_guard_approved')
-order by p.proname;
+  union all
+  select 3, '트리거', tg.tgname::text || ' (상태 ' || tg.tgenabled::text || ')',
+         pg_get_triggerdef(tg.oid)
+  from pg_trigger tg, t
+  where tg.tgrelid = t.oid and not tg.tgisinternal
 
-\echo '===== teachers RLS 정책 ====='
-select polname as "정책", pg_get_expr(polqual, polrelid) as "USING",
-       pg_get_expr(polwithcheck, polrelid) as "WITH CHECK"
-from pg_policy where polrelid = 'public.teachers'::regclass;
+  union all
+  select 4, '함수',
+         p.proname::text || case when p.prosecdef then ' [security definer]'
+                                 else ' [security invoker]' end,
+         '실행권한: ' ||
+         coalesce(array_to_string(p.proacl, ', '), '(기본값 — PUBLIC 실행 가능)') ||
+         E'\n' || pg_get_functiondef(p.oid)
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public'
+    and p.proname in ('whoami', 'admin_set_teacher_approval', 'teachers_guard_approved')
 
-\echo '===== 승인 현황 (숫자만) ====='
-select count(*) filter (where approved) as "승인됨",
-       count(*) filter (where not approved) as "미승인",
-       count(*) as "전체"
-from public.teachers;
+  union all
+  select 5, 'RLS 정책', pol.polname::text,
+         'USING: ' || coalesce(pg_get_expr(pol.polqual, pol.polrelid), '(없음)') ||
+         E'\nWITH CHECK: ' || coalesce(pg_get_expr(pol.polwithcheck, pol.polrelid), '(없음)')
+  from pg_policy pol, t where pol.polrelid = t.oid
+
+  union all
+  select 6, 'RLS 상태', 'teachers',
+         'row security = ' || c.relrowsecurity::text ||
+         ' / force = ' || c.relforcerowsecurity::text ||
+         '  (force=false 이므로 소유자는 RLS 를 우회한다 = 관리자 경로)'
+  from pg_class c, t where c.oid = t.oid
+
+) s order by sort, 이름;

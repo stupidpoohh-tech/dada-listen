@@ -69,15 +69,21 @@ psql "$NEON_DATABASE_URL" -f db/migrations/0005_teachers_approval_privileges.sql
 
 ### 운영 DB 점검 (읽기 전용)
 
-운영에는 **쓰기가 없는 것만** 돌린다.
+운영에는 **쓰기가 없는 것만** 돌린다. 아래 셋은 모두 Neon 콘솔 SQL Editor 에
+통째로 붙여넣어 쓸 수 있다 (문장 하나 · psql 전용 명령 없음).
 
-```bash
-psql "$NEON_DATABASE_URL" -X -f db/checks/p0_snapshot.sql > ~/p0_before.txt   # 적용 전 기록
-psql "$NEON_DATABASE_URL" -X -f db/checks/p0_verify.sql                       # 승인 보호 검증
-```
+| 파일 | 쓰임 |
+|---|---|
+| `db/checks/p0_snapshot.sql` | 적용 전후 권한 상태 기록·비교 |
+| `db/checks/p0_verify.sql` | 승인 보호가 걸려 있는지 검증 |
+| `db/checks/approved_audit.sql` | 승인된 강사 목록 (관리자 검토용) |
 
-`p0_verify.sql` 은 "결과" 열에 FAIL 이 없어야 한다. **확인불가는 통과가 아니다** —
+`p0_verify.sql` 은 "결과" 열에 FAIL 이 없어야 한다. **확인불가는 통과가 아니다.**
 무엇이 없는지 상세를 보고 해결한다.
+
+권한 서명으로도 확인할 수 있다. 적용 전에는 테이블 권한에 `authenticated=arwd`
+가 보이고, 적용 후에는 `authenticated=rd` 만 남으며 컬럼 권한이 `id=a`,
+`name=aw` 로 생기고 `approved` 에는 아무 권한도 없다.
 
 ### RLS 테스트
 
