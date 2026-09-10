@@ -55,6 +55,18 @@ Neon 프로젝트에서 **Data API 와 Auth 를 먼저 켜야 한다.** 그래�
 for f in db/migrations/*.sql; do psql "$NEON_DATABASE_URL" -f "$f"; done
 ```
 
+**이미 돌아가는 DB 에 새 마이그레이션만 얹을 때는 그 파일만 돌린다.** 0001 은
+`create table` 이라 재실행하면 실패하고, 거기서 멈추면 뒤 파일이 안 돌아간다.
+
+```bash
+psql "$NEON_DATABASE_URL" -f db/migrations/0005_teachers_approval_privileges.sql
+```
+
+전체를 다시 돌려야 한다면 **0003 을 확인하고 돌린다.** 예전 0003 은 미승인 계정을
+전부 승인해 버렸다. 지금은 컬럼이 처음 생길 때만 백필하도록 조건이 걸려 있어
+재실행해도 안전하지만, 돌린 뒤 `db/checks/approved_audit.sql` 로 승인 목록을
+한 번 확인한다 (D-020).
+
 ### RLS 테스트
 
 RLS 는 깨져도 조용하다 — 화면은 멀쩡한데 남의 데이터가 보인다. 그래서 테스트한다.
@@ -108,6 +120,29 @@ db/
   tests/            RLS 회귀 테스트 (+ Neon 없이 돌리기 위한 스텁)
   checks/           막혔을 때 붙여넣고 돌리는 진단 SQL
 ```
+
+## 강사 승인
+
+공개 가입이라 **낯선 사람도 계정을 만들 수 있다.** 그래서 업로드와 전사(유료)는
+`teachers.approved` 가 켜진 강사만 할 수 있다. 승인은 **관리자만** 한다 —
+일반 사용자는 이 컬럼을 읽을 수만 있고 쓸 수 없다 (D-020).
+
+```sql
+-- 승인 (Neon SQL Editor, 소유자 접속)
+select public.admin_set_teacher_approval('<강사 id>', true);
+
+-- 승인 취소
+select public.admin_set_teacher_approval('<강사 id>', false);
+
+-- 누가 승인돼 있는지 훑어보기
+--   db/checks/approved_audit.sql
+```
+
+손으로 `update public.teachers set approved = true` 를 치지 않는다. WHERE 를
+빠뜨리면 그 순간 **전원이 승인된다.** 위 함수는 id 를 반드시 받는다.
+
+승인 취소는 Worker 캐시 때문에 **최대 60초 뒤에 반영된다.** 급하면 Worker 를
+재배포하면 캐시가 비워진다.
 
 ## 업로드가 막힐 때
 

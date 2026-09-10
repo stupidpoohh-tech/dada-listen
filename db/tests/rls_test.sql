@@ -25,7 +25,7 @@ create table _rls_result (n serial, phase text, result text, check_name text, de
 
 do $$
 declare
-  n int; ok bool; who text; expr text;
+  n int; ok bool; stole bool; who text; expr text;
   can_switch bool := false;
   t text;
   tables_all constant text[] := array[
@@ -127,6 +127,49 @@ select count(*) into n from generate_series(1,2000) g
 insert into _rls_result (phase, result, check_name, detail) values (
   '정적', case when n = 0 then 'PASS' else 'FAIL' end,
   '반 코드에 혼동문자(0 O I L 1) 없음', '2000회 중 '||n||'건');
+
+-- 10~13. 승인 컬럼은 일반 사용자가 건드릴 수 없다 (0005)
+--
+-- 여기가 P0 였다. teachers_self 정책은 "내 행인가"만 보고 "어떤 컬럼인가"는 보지
+-- 않아서, 테이블 단위 권한이 있는 한 누구나 자기 approved 를 true 로 바꿀 수
+-- 있었다. 그러면 Worker 의 업로드·전사(유료) 통제가 통째로 뚫린다.
+--
+-- has_column_privilege 는 **테이블 단위 권한이 있으면 true 를 돌려준다.** 그래서
+-- 이 한 줄이 "컬럼 권한이 빠졌다"와 "테이블 권한이 되살아났다"를 동시에 잡는다.
+insert into _rls_result (phase, result, check_name, detail) values (
+  '정적',
+  case when not has_column_privilege('authenticated','public.teachers','approved','update')
+       then 'PASS' else 'FAIL' end,
+  'authenticated 는 teachers.approved 를 UPDATE 할 수 없다',
+  case when has_column_privilege('authenticated','public.teachers','approved','update')
+       then '가능함 — 스스로 승인 가능, P0' else '권한 없음' end);
+
+insert into _rls_result (phase, result, check_name, detail) values (
+  '정적',
+  case when not has_column_privilege('authenticated','public.teachers','approved','insert')
+       then 'PASS' else 'FAIL' end,
+  'authenticated 는 teachers.approved 를 INSERT 할 수 없다',
+  case when has_column_privilege('authenticated','public.teachers','approved','insert')
+       then '가능함 — 승인된 채로 가입 가능, P0' else '권한 없음' end);
+
+-- 반대 방향도 지킨다. 너무 걷어내서 프로필을 못 만들면 로그인 자체가 막힌다.
+insert into _rls_result (phase, result, check_name, detail) values (
+  '정적',
+  case when has_column_privilege('authenticated','public.teachers','name','insert')
+        and has_column_privilege('authenticated','public.teachers','name','update')
+       then 'PASS' else 'FAIL' end,
+  'authenticated 는 자기 이름은 만들고 고칠 수 있다',
+  'insert '||has_column_privilege('authenticated','public.teachers','name','insert')||
+  ' / update '||has_column_privilege('authenticated','public.teachers','name','update'));
+
+select count(*) into n from pg_trigger
+  where tgrelid = 'public.teachers'::regclass and tgname = 'teachers_guard_approved'
+    and not tgisinternal;
+insert into _rls_result (phase, result, check_name, detail) values (
+  '정적', case when n = 1 then 'PASS' else 'FAIL' end,
+  'approved 를 지키는 트리거가 걸려 있다',
+  case when n = 1 then '있음 (테이블 권한이 되살아나도 막는다)'
+       else '없음 — 0001 재실행 시 무방비' end);
 
 
 -- =====================================================================
@@ -233,6 +276,144 @@ else
   select count(*) into n from public.items;
   insert into _rls_result (phase, result, check_name, detail) values (
     '동작', case when n=0 then 'PASS' else 'FAIL' end,'토큰 없는 authenticated 는 아무것도 못 본다','실제 '||n);
+
+  -- =================================================================
+  -- 승인 우회 (P0, 0005) — 실제 역할로 세 가지 경로를 모두 시험한다
+  -- =================================================================
+  reset role;
+  delete from public.teachers where id like 'user_appr%';
+  insert into public.teachers (id, name) values ('user_appr_victim','미승인강사');
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims','{"sub":"user_appr_victim"}', true);
+
+  -- (a) 자기 approved 를 직접 올린다
+  ok := false;
+  begin
+    update public.teachers set approved = true where id = auth.user_id();
+  exception when others then ok := true; end;
+  select coalesce(bool_or(approved), false) into stole
+    from public.teachers where id = 'user_appr_victim';
+  insert into _rls_result (phase, result, check_name, detail) values (
+    '동작', case when ok and not stole then 'PASS' else 'FAIL' end,
+    '미승인 강사가 자기 approved 를 UPDATE 로 못 올린다',
+    case when stole then '승인 탈취됨 — P0' else '거부됨' end);
+
+  -- (b) 처음부터 승인된 채로 가입한다
+  reset role;
+  delete from public.teachers where id = 'user_appr_new';
+  set local role authenticated;
+  perform set_config('request.jwt.claims','{"sub":"user_appr_new"}', true);
+  ok := false;
+  begin
+    insert into public.teachers (name, approved) values ('새강사', true);
+  exception when others then ok := true; end;
+  select coalesce(bool_or(approved), false) into stole
+    from public.teachers where id = 'user_appr_new';
+  insert into _rls_result (phase, result, check_name, detail) values (
+    '동작', case when ok and not stole then 'PASS' else 'FAIL' end,
+    '승인된 채로 프로필을 만들 수 없다',
+    case when stole then '승인된 채 생성됨 — P0' else '거부됨' end);
+
+  -- (c) upsert(ON CONFLICT DO UPDATE) 로 훔친다 — 앱이 실제로 쓰는 모양
+  reset role;
+  delete from public.teachers where id = 'user_appr_up';
+  insert into public.teachers (id, name) values ('user_appr_up','업서트강사');
+  set local role authenticated;
+  perform set_config('request.jwt.claims','{"sub":"user_appr_up"}', true);
+  ok := false;
+  begin
+    insert into public.teachers (id, name, approved) values (auth.user_id(),'업서트강사', true)
+      on conflict (id) do update set name = excluded.name, approved = excluded.approved;
+  exception when others then ok := true; end;
+  select coalesce(bool_or(approved), false) into stole
+    from public.teachers where id = 'user_appr_up';
+  insert into _rls_result (phase, result, check_name, detail) values (
+    '동작', case when ok and not stole then 'PASS' else 'FAIL' end,
+    'upsert 로도 승인을 훔칠 수 없다',
+    case when stole then '승인 탈취됨 — P0' else '거부됨' end);
+
+  -- 정상 경로는 그대로 된다: 프로필 생성 + 이름 변경
+  reset role;
+  delete from public.teachers where id = 'user_appr_ok';
+  set local role authenticated;
+  perform set_config('request.jwt.claims','{"sub":"user_appr_ok"}', true);
+  ok := true;
+  begin
+    insert into public.teachers (name) values ('정상강사');
+    update public.teachers set name = '이름바꿈' where id = auth.user_id();
+  exception when others then ok := false; end;
+  select count(*) into n from public.teachers
+    where id = 'user_appr_ok' and name = '이름바꿈' and approved = false;
+  insert into _rls_result (phase, result, check_name, detail) values (
+    '동작', case when ok and n = 1 then 'PASS' else 'FAIL' end,
+    '일반 강사는 자기 프로필을 만들고 이름을 고칠 수 있다',
+    case when ok and n = 1 then '생성·수정 성공, approved 는 false 유지'
+         else '막힘 — 로그인이 깨진다' end);
+
+  -- 남의 프로필은 못 고친다 (RLS 가 행을 숨긴다)
+  update public.teachers set name = '탈취' where id = 'user_appr_victim';
+  select count(*) into n from public.teachers
+    where id = 'user_appr_victim' and name = '탈취';
+  insert into _rls_result (phase, result, check_name, detail) values (
+    '동작', case when n = 0 then 'PASS' else 'FAIL' end,
+    '다른 강사의 프로필은 고칠 수 없다',
+    case when n = 0 then '변경 0건' else '변경됨 — 위험' end);
+
+  -- 관리자(소유자)는 승인·승인취소를 할 수 있다
+  reset role;
+  ok := true;
+  begin
+    perform public.admin_set_teacher_approval('user_appr_victim', true);
+  exception when others then ok := false; end;
+  select coalesce(bool_or(approved), false) into stole
+    from public.teachers where id = 'user_appr_victim';
+  insert into _rls_result (phase, result, check_name, detail) values (
+    '동작', case when ok and stole then 'PASS' else 'FAIL' end,
+    '관리자는 강사를 승인할 수 있다',
+    case when ok and stole then '승인됨' else '승인 실패 — 운영이 막힌다' end);
+
+  -- 승인된 강사가 재로그인해도(= ensureTeacher 의 upsert) 승인이 유지된다
+  set local role authenticated;
+  perform set_config('request.jwt.claims','{"sub":"user_appr_victim"}', true);
+  ok := true;
+  begin
+    -- PostgREST 의 merge-duplicates upsert 가 만드는 SQL 과 같은 모양
+    insert into public.teachers (name) values ('재로그인이름')
+      on conflict (id) do update set name = excluded.name;
+  exception when others then ok := false; end;
+  reset role;
+  select count(*) into n from public.teachers
+    where id = 'user_appr_victim' and name = '재로그인이름' and approved;
+  insert into _rls_result (phase, result, check_name, detail) values (
+    '동작', case when ok and n = 1 then 'PASS' else 'FAIL' end,
+    '승인된 강사는 재로그인해도 승인이 유지된다',
+    case when ok and n = 1 then '이름 갱신 + 승인 유지'
+         else '승인이 풀렸거나 upsert 가 막혔다' end);
+
+  -- 관리자는 승인을 취소할 수도 있다
+  ok := true;
+  begin
+    perform public.admin_set_teacher_approval('user_appr_victim', false);
+  exception when others then ok := false; end;
+  select coalesce(bool_or(approved), true) into stole
+    from public.teachers where id = 'user_appr_victim';
+  insert into _rls_result (phase, result, check_name, detail) values (
+    '동작', case when ok and not stole then 'PASS' else 'FAIL' end,
+    '관리자는 승인을 취소할 수 있다',
+    case when ok and not stole then '승인 취소됨' else '취소 실패' end);
+
+  -- 관리자 함수는 id 없이 전원 승인하는 사고를 막는다 (0003 에서 실제로 겪었다)
+  ok := false;
+  begin
+    perform public.admin_set_teacher_approval('', true);
+  exception when others then ok := true; end;
+  insert into _rls_result (phase, result, check_name, detail) values (
+    '동작', case when ok then 'PASS' else 'FAIL' end,
+    '관리자 함수는 빈 id 로 전원 승인을 거부한다',
+    case when ok then '거부됨' else '통과됨 — 전원 승인 사고 위험' end);
+
+  set local role authenticated;
 
   -- 학생(anonymous) 은 접근조차 안 된다
   set local role anonymous;
