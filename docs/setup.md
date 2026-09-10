@@ -13,7 +13,7 @@
 | R2 버킷 `dada-media` | ✅ 생성됨, Public Access 꺼짐 |
 | Deepgram 키 | ⬜ 아직 |
 | Neon 연결 문자열 | ⬜ 아직 |
-| 스키마 적용 | ⬜ 아직 (0001·0002·0003) |
+| 스키마 적용 | ⬜ 아직 (0001~0005) |
 | Cloudflare 비밀 3개 | ⬜ 아직 |
 
 **R2 access key 는 만들지 않습니다.** Worker 가 바인딩으로 붙으므로 필요 없습니다.
@@ -32,38 +32,71 @@ Neon 콘솔 → 프로젝트 → **Connect** → `postgresql://...` 복사.
 
 **Neon 콘솔 → SQL Editor** (psql 없이 됩니다)
 
-1. `db/migrations/0001_init.sql` 을 붙여넣고 **Run**
-2. `db/migrations/0002_whoami.sql` 을 붙여넣고 **Run**
-3. `db/migrations/0003_approved_teacher.sql` 을 붙여넣고 **Run**
-4. `db/tests/rls_test.sql` 을 붙여넣고 **Run**
+**번호 순서대로** 하나씩 붙여넣고 **Run** 합니다. 중간에서 멈추면 화면은
+멀쩡한데 업로드만 막히는 상태가 됩니다.
 
-4번 결과가 표로 나옵니다. 마지막 요약 줄에 **FAIL 이 0** 이어야 합니다:
+1. `db/migrations/0001_init.sql`
+2. `db/migrations/0002_whoami.sql`
+3. `db/migrations/0003_approved_teacher.sql`
+4. `db/migrations/0004_whoami_definer.sql`
+5. `db/migrations/0005_teachers_approval_privileges.sql`
+6. `db/tests/rls_test.sql` — 확인용
+
+6번 결과가 표로 나옵니다. 마지막 요약 줄에 **FAIL 이 0** 이어야 합니다:
 
 ```
-9 PASS / 0 FAIL / 1 SKIP   통과 — 다음 단계로 진행하세요
+34 PASS / 0 FAIL / 0 SKIP   통과 — 다음 단계로 진행하세요
 ```
 
-**SKIP 한 줄은 정상입니다.** 테스트는 두 단계로 나뉘어 있습니다.
+> ⚠️ **이미 돌아가는 DB 에는 새 파일만 돌립니다.** 위 순서는 처음 설치할 때
+> 얘기입니다. 0001 은 `create table` 이라 다시 돌리면 실패하고, 0003 을 다시
+> 돌리면 `whoami` 정의가 예전 방식으로 되돌아갑니다.
+>
+> ⚠️ **`db/tests/rls_test.sql` 은 운영에 쓰는 브랜치에서는 돌리지 마세요.**
+> 확인용이지만 `teachers` · `items` 에 실제로 쓰고 지웁니다(롤백은 됩니다).
+> 운영 브랜치에서는 `db/checks/p0_verify.sql` 을 쓰세요 — 읽기만 합니다.
+
+SKIP 이 나오면 그건 통과가 아닙니다. 테스트는 두 단계로 나뉘어 있습니다.
 
 | 단계 | 무엇을 보나 | 언제 도나 |
 |---|---|---|
 | **정적** | 권한과 정책이 의도대로 걸렸는지 카탈로그에서 확인 | 항상 |
 | **동작** | 실제로 남의 데이터가 보이는지 시험 | `SET ROLE` 권한이 있을 때만 |
 
-Neon 의 기본 접속 계정(`neondb_owner`)은 `authenticated` 역할로 전환할 권한이
-없어서 동작 검사가 SKIP 됩니다. **정적 검사만으로도 충분히 잡힙니다** —
-정책을 일부러 열어놓고 돌려보면 그 9개 안에서 걸립니다.
+`SET ROLE` 이 안 되는 접속으로 돌리면 동작 검사가 SKIP 됩니다. Neon 의 기본
+접속 계정에서는 보통 둘 다 돌아 34개가 전부 나옵니다.
 
 ❌ 가 하나라도 있으면 **멈추고 알려주세요.** RLS 는 깨져도 화면이 멀쩡해서
 이 테스트가 유일한 경보입니다. 테스트는 끝에서 롤백하므로 데이터를 남기지 않습니다.
 
-**`psql` 이 있으면**
+## 2-b. 앱 주소를 Neon Auth 에 등록 (안 하면 로그인이 안 됩니다)
 
-```bash
-export NEON_DATABASE_URL='postgresql://...'      # 1번에서 복사한 값
-psql "$NEON_DATABASE_URL" -f db/migrations/0001_init.sql
-psql "$NEON_DATABASE_URL" -f db/tests/rls_test.sql
+Neon Auth 는 **어느 주소에서 온 요청인지**를 보고 모르는 주소면 거절합니다.
+등록하지 않으면 로그인·가입이 이렇게 실패합니다:
+
 ```
+로그인에 실패했어요 — Invalid origin
+```
+
+브라우저 개발자도구 콘솔에는 `AuthApiError: Invalid origin` 과 403 이 뜹니다.
+**비밀번호나 계정 문제가 아니고, DB 나 권한 문제도 아닙니다.** 주소 등록 문제입니다.
+
+등록 경로:
+
+1. Neon 콘솔 → 좌측 **Auth**
+2. **Configuration** (또는 **Settings**) 탭
+3. **Domains** / **Allowed origins** 항목의 **Add domain**
+4. 브라우저 주소창에 실제로 보이는 주소를 그대로 넣고 **Save**
+
+**주소를 쓰는 앱마다 전부 등록해야 합니다.** 흔히 빠뜨리는 것들:
+
+- `https://dada-listening.<계정>.workers.dev` (Cloudflare 기본 주소)
+- 직접 연결한 도메인 (`https://내도메인.com`)
+- `www.` 가 붙는 주소와 안 붙는 주소는 **서로 다른 주소**입니다
+- 개발용 `http://localhost:5173`
+
+주소가 하나라도 바뀌면(도메인 연결, 서브도메인 변경) 다시 등록해야 합니다.
+
 
 ## 3. 강사 계정 만들기
 
@@ -82,15 +115,25 @@ psql "$NEON_DATABASE_URL" -f db/tests/rls_test.sql
 
 가입은 되지만 **업로드와 전사는 아직 막혀 있습니다.** 아래 이유 때문입니다.
 
-SQL Editor 에서 (id 를 찾아 넣을 필요 없습니다 — 강사가 한 명이니까요):
+SQL Editor 에서 **자기 id 를 찾아** 승인합니다.
 
 ```sql
-update public.teachers set approved = true;
-
 select id, name, approved from public.teachers;
 ```
 
-두 번째 줄에서 `approved = true` 인 행이 하나 보이면 끝입니다.
+거기서 본인 id 를 복사해 넣습니다.
+
+```sql
+select public.admin_set_teacher_approval('여기에_본인_id', true);
+```
+
+> ⚠️ **`update public.teachers set approved = true` 를 치지 마세요.**
+> WHERE 를 빠뜨리면 그 순간 **가입한 사람 전원이 승인됩니다.** 공개 가입이라
+> 낯선 사람도 계정을 만들 수 있어서, 그대로 R2 용량과 Deepgram 크레딧이
+> 나갑니다. 위 함수는 id 를 반드시 받아서 그 사고를 막습니다 (D-020).
+>
+> 일반 사용자는 `approved` 를 직접 못 바꿉니다. 이 함수도 관리자(Neon 콘솔
+> 소유자 접속)로만 실행됩니다.
 
 > **순서가 중요합니다.** 로그인을 한 번 해야 `teachers` 행이 생깁니다.
 > 로그인 전에 이 UPDATE 를 돌리면 고칠 행이 없어 아무 일도 일어나지 않습니다
