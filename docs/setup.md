@@ -11,12 +11,17 @@
 | Neon 프로젝트 | ✅ 생성됨 (ap-southeast-1) |
 | Neon Data API · Auth | ✅ 켜짐 (URL 발급됨) |
 | R2 버킷 `dada-media` | ✅ 생성됨, Public Access 꺼짐 |
-| Deepgram 키 | ⬜ 아직 |
-| Neon 연결 문자열 | ⬜ 아직 |
-| 스키마 적용 | ⬜ 아직 (0001~0005) |
-| Cloudflare 비밀 3개 | ⬜ 아직 |
+| Deepgram 키 | ✅ 발급·등록됨 (실제 전사 성공 확인) |
+| 앱 주소 Neon Auth 등록 | ✅ 등록됨 (2-b) |
+| 스키마 적용 | ✅ 0001~0005 적용됨 |
+| 승인 보호 (P0) | ✅ 0005 적용, `p0_verify.sql` 전부 PASS |
+| Cloudflare 비밀 3개 | ✅ 등록됨 (업로드·전사 동작) |
+| 배포 | ✅ Cloudflare Workers |
 
 **R2 access key 는 만들지 않습니다.** Worker 가 바인딩으로 붙으므로 필요 없습니다.
+
+아래 1~7 은 **처음 설치하거나 새 환경을 만들 때** 보는 절차입니다. 지금 돌아가는
+환경은 이미 다 되어 있습니다. 점검만 하려면 `db/checks/p0_verify.sql` 을 보세요.
 
 ---
 
