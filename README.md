@@ -67,7 +67,26 @@ psql "$NEON_DATABASE_URL" -f db/migrations/0005_teachers_approval_privileges.sql
 재실행해도 안전하지만, 돌린 뒤 `db/checks/approved_audit.sql` 로 승인 목록을
 한 번 확인한다 (D-020).
 
+### 운영 DB 점검 (읽기 전용)
+
+운영에는 **쓰기가 없는 것만** 돌린다.
+
+```bash
+psql "$NEON_DATABASE_URL" -X -f db/checks/p0_snapshot.sql > ~/p0_before.txt   # 적용 전 기록
+psql "$NEON_DATABASE_URL" -X -f db/checks/p0_verify.sql                       # 승인 보호 검증
+```
+
+`p0_verify.sql` 은 "결과" 열에 FAIL 이 없어야 한다. **확인불가는 통과가 아니다** —
+무엇이 없는지 상세를 보고 해결한다.
+
 ### RLS 테스트
+
+> ⚠️ **`db/tests/rls_test.sql` 은 운영 DB 에 돌리지 않는다.**
+> teachers·items·classes 에 실제로 INSERT/DELETE 하고
+> (`delete from public.teachers where id like 'user_appr%'` 포함),
+> 연결 역할에 `authenticated` 를 부여한다. `rollback` 으로 되돌긴 하지만
+> 운영 테이블에 쓰기와 잠금이 실제로 일어나고, 고정 id 가 겹치면 실패한다.
+> 동작 검사는 **격리된 Neon 브랜치**에서만 한다.
 
 RLS 는 깨져도 조용하다 — 화면은 멀쩡한데 남의 데이터가 보인다. 그래서 테스트한다.
 
