@@ -10,6 +10,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Ic } from './icons';
 import TrimPanel from './TrimPanel';
 import { ACCEPT_MEDIA, isAudioFile, readDuration, resolveMime } from '../lib/media';
+import { SCRIPT_ACCEPT, readTranscriptFile } from '../lib/sourceText';
+import { alignTranscript, parseTranscript, transcriptForQuestion } from '../lib/transcript';
 import { splitIntoQuestions } from '../lib/split';
 import type { QuestionBlock } from '../lib/split';
 import {
@@ -18,6 +20,7 @@ import {
   createQuestionItems,
   deleteItem,
   listSegments,
+  replaceSegments,
   requestTranscription,
   updateItem,
   uploadMedia,
@@ -63,6 +66,34 @@ export default function UploadModal({ folders, onClose, onChanged, toast }: Prop
   const [mergeLastTwo, setMergeLastTwo] = useState(true);
   const [splitting, setSplitting] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const scriptRef = useRef<HTMLInputElement>(null);
+  const [scriptText, setScriptText] = useState('');
+  const [scriptName, setScriptName] = useState('');
+  const [scriptBusy, setScriptBusy] = useState(false);
+  const [scriptError, setScriptError] = useState('');
+  const [scriptEditorOpen, setScriptEditorOpen] = useState(false);
+  const [finishing, setFinishing] = useState(false);
+  const parsedScript = useMemo(() => parseTranscript(scriptText), [scriptText]);
+
+  const pickScript = async (selected?: File) => {
+    if (!selected) return;
+    setScriptBusy(true);
+    setScriptError('');
+    try {
+      const extracted = await readTranscriptFile(selected);
+      if (!alive.current) return;
+      setScriptText(extracted);
+      setScriptName(selected.name);
+      toast('대본을 불러왔습니다. 음원과 일치하는 부분에 적용합니다');
+    } catch (e) {
+      if (alive.current) {
+        setScriptError(e instanceof Error ? e.message : '대본을 읽지 못했습니다');
+        setScriptName('');
+      }
+    } finally {
+      if (alive.current) setScriptBusy(false);
+    }
+  };
 
   // 언마운트 뒤 setState 를 막는다. 전사 폴링이 모달보다 오래 살 수 있다.
   const alive = useRef(true);
@@ -161,6 +192,26 @@ export default function UploadModal({ folders, onClose, onChanged, toast }: Prop
     [phase, splitOn, splitCount, mergeLastTwo],
   );
 
+  const corrections = useMemo(() => {
+    if (phase.kind !== 'done' || !scriptText.trim()) return null;
+    const targets = splitOn ? blocks : [{
+      no: '1', segFrom: 0, segTo: phase.segments.length - 1,
+    }];
+    let applied = 0;
+    let unmatched = 0;
+    const scripts: Record<string, string> = {};
+    for (const target of targets) {
+      const script = transcriptForQuestion(parsedScript, target.no, targets.length);
+      if (!script) { unmatched++; continue; }
+      const extracted = phase.segments.slice(target.segFrom, target.segTo + 1);
+      const result = alignTranscript(extracted, script);
+      if (result.applied) { scripts[target.no] = script; applied++; }
+      else unmatched++;
+    }
+    return { applied, unmatched, total: targets.length, scripts };
+  }, [blocks, parsedScript, phase, scriptText, splitOn]);
+
+
   /**
    * 찾은 구간대로 문항 아이템을 만든다.
    *
@@ -177,6 +228,7 @@ export default function UploadModal({ folders, onClose, onChanged, toast }: Prop
         tags,
         mediaKey: phase.mediaKey,
         mime: file ? resolveMime(file) : null,
+        scriptByQuestion: corrections?.scripts,
       });
       await deleteItem(phase.itemId);
       onChanged();
@@ -192,7 +244,25 @@ export default function UploadModal({ folders, onClose, onChanged, toast }: Prop
     }
   };
 
-  const canSave = Boolean(file) && title.trim().length > 0 && !busy && phase.kind !== 'done';
+  const finishSingle = async () => {
+    if (phase.kind !== 'done' || finishing) return;
+    setFinishing(true);
+    try {
+      if (corrections?.scripts['1']) {
+        const corrected = alignTranscript(phase.segments, corrections.scripts['1']);
+        if (corrected.applied) await replaceSegments(phase.itemId, corrected.segments);
+      }
+      onChanged();
+      toast(corrections?.applied ? '공식 대본을 적용했습니다' : '음성을 저장했습니다');
+      onClose();
+    } catch (e) {
+      if (alive.current) setPhase({ kind: 'failed', message: e instanceof Error ? e.message : '대본을 저장하지 못했습니다' });
+    } finally {
+      if (alive.current) setFinishing(false);
+    }
+  };
+
+  const canSave = Boolean(file) && title.trim().length > 0 && !busy && !scriptBusy && phase.kind !== 'done';
 
   return (
     <div className="overlay" onMouseDown={(e) => {
@@ -305,25 +375,74 @@ export default function UploadModal({ folders, onClose, onChanged, toast }: Prop
               </div>
 
               <div className="field" style={{ marginBottom: 0 }}>
-                <label>
-                  스크립트 <span className="hint">· 올리면 자동으로 만들어집니다. 타이핑할 필요 없어요</span>
-                </label>
-                <div
-                  style={{
-                    border: '1px solid var(--line)', borderRadius: 'var(--r)', padding: 16,
-                    background: 'var(--bg-soft)', minHeight: 96, display: 'grid',
-                    placeItems: 'center', color: 'var(--ink-3)', fontSize: 13,
-                    textAlign: 'center', lineHeight: 1.7,
-                  }}
-                >
-                  {phase.kind === 'transcribing'
-                    ? '전사 중…  파일 길이에 따라 몇십 초 걸릴 수 있어요'
-                    : '파일을 올리면 자동으로 전사됩니다.'}
+                <label>대본 <span className="hint">· 선택 사항</span></label>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <input
+                    ref={scriptRef}
+                    type="file"
+                    accept={SCRIPT_ACCEPT}
+                    style={{ display: 'none' }}
+                    disabled={busy || scriptBusy}
+                    onChange={(e) => {
+                      void pickScript(e.target.files?.[0]);
+                      e.target.value = '';
+                    }}
+                  />
+                  <button type="button" className="btn ghost sm"
+                    disabled={busy || scriptBusy}
+                    onClick={() => scriptRef.current?.click()}>
+                    <Ic.upload s={15} /> {scriptBusy ? '대본 읽는 중…' : 'PDF·TXT 파일 선택'}
+                  </button>
+                  <button type="button" className="btn ghost sm"
+                    disabled={busy}
+                    onClick={() => setScriptEditorOpen(v => !v)}>
+                    {scriptEditorOpen ? '입력창 접기' : '텍스트 직접 입력'}
+                  </button>
+                  {scriptText && (
+                    <button type="button" className="btn ghost sm" disabled={busy}
+                      onClick={() => { setScriptText(''); setScriptName(''); setScriptError(''); }}>
+                      대본 제거
+                    </button>
+                  )}
+                </div>
+                {scriptName && <div className="hint" style={{ marginTop: 6 }}>불러온 파일: {scriptName}</div>}
+                {scriptEditorOpen && (
+                  <textarea className="input"
+                    style={{ width: '100%', minHeight: 128, marginTop: 9, resize: 'vertical', lineHeight: 1.6 }}
+                    value={scriptText}
+                    disabled={busy}
+                    onChange={(e) => { setScriptText(e.target.value); setScriptName(''); setScriptError(''); }}
+                    placeholder={'1. W: Hello, everyone.\n2. M: Good morning.\n...\n16~17. M: These days, people...'}
+                    aria-label="공식 대본 텍스트"
+                  />
+                )}
+                {scriptText && (
+                  <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 7, lineHeight: 1.6 }}>
+                    {parsedScript.numbered
+                      ? '문항별 대본 ' + Object.keys(parsedScript.sections).length + '개 인식'
+                      : '번호 없는 대본: 단일 음원에만 자동 적용됩니다. 문항별로 나누려면 1., 2.처럼 번호를 붙여 주세요.'}
+                  </div>
+                )}
+                {scriptError && (
+                  <div role="alert" style={{ fontSize: 12.5, marginTop: 8, color: '#c8392b' }}>
+                    {scriptError}
+                  </div>
+                )}
+                <div className="hint" style={{ marginTop: 8, lineHeight: 1.6 }}>
+                  대본이 있으면 AI가 음성 시간대를 분석하고 일치하는 구간은 대본 문장으로 교정합니다.
+                  대본이 없거나 맞지 않는 구간은 기존 AI 전사를 사용합니다.
                 </div>
               </div>
             </>
           )}
 
+          {phase.kind === 'done' && corrections && (
+            <div style={{ padding: '9px 14px', fontSize: 12.5, color: 'var(--ink-2)', lineHeight: 1.6 }}>
+              공식 대본 적용 가능: {corrections.applied}/{corrections.total}개
+              {corrections.unmatched > 0 &&
+                ' · 나머지 ' + corrections.unmatched + '개는 AI 전사를 유지합니다.'}
+            </div>
+          )}
           {phase.kind === 'done' && (
             splitOn
               ? (
@@ -384,6 +503,11 @@ export default function UploadModal({ folders, onClose, onChanged, toast }: Prop
               onClick={() => void applySplit()}
             >
               <Ic.check /> {splitting ? '나누는 중…' : `${blocks.length}개 문항으로 추가`}
+            </button>
+          )}
+          {phase.kind === 'done' && !splitOn && (
+            <button className="btn primary" disabled={finishing} onClick={() => void finishSingle()}>
+              <Ic.check /> {finishing ? '저장 중…' : '완료'}
             </button>
           )}
           {phase.kind !== 'done' && (

@@ -35,6 +35,7 @@ import type {
 } from './types';
 import { resolveMime } from './media';
 import type { QuestionBlock } from './split';
+import { alignTranscript } from './transcript';
 
 /* ------------------------------------------------------------------ *
  * 인증 — auth.users 의 모든 행은 강사다. 학생은 계정을 갖지 않는다 (D-005).
@@ -412,7 +413,7 @@ export async function replaceSegments(
 export async function createQuestionItems(
   blocks: readonly QuestionBlock[],
   segments: readonly Segment[],
-  base: { title: string; folderId: string | null; tags: string[]; mediaKey: string; mime: string | null },
+  base: { title: string; folderId: string | null; tags: string[]; mediaKey: string; mime: string | null; scriptByQuestion?: Record<string, string> },
 ): Promise<Item[]> {
   const made: Item[] = [];
   try {
@@ -433,7 +434,9 @@ export async function createQuestionItems(
       const mine = segments
         .slice(b.segFrom, b.segTo + 1)
         .map((seg, i) => ({ ...seg, idx: i }));
-      await replaceSegments(item.id, mine);
+      const script = base.scriptByQuestion?.[b.no];
+      const corrected = script ? alignTranscript(mine, script) : null;
+      await replaceSegments(item.id, corrected?.applied ? corrected.segments : mine);
       await updateItem(item.id, { status: 'ready' });
     }
     return made;
