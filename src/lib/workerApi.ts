@@ -198,11 +198,11 @@ export async function fetchTranscription(
   return (await res.json()) as TranscriptionState;
 }
 
-/** 관리자만: 현재 업로드한 문항을 비공개 R2 공유 스냅샷으로 게시한다. */
+/** 관리자만: 학생용 보기 전체 목록을 자동 동기화한다. */
 export function publishStudentLibrary(
   token: string,
   payload: { items: unknown[]; folders: unknown[]; segments: Record<string, unknown[]> },
-): Promise<{share: string; count: number}> {
+): Promise<{count: number}> {
   return call('/student/publish', token, {
     method: 'POST',
     headers: {'content-type':'application/json'},
@@ -210,11 +210,10 @@ export function publishStudentLibrary(
   });
 }
 
-/** 로그인 없이 공유 링크 토큰으로 자료를 가져온다. */
-export async function fetchStudentLibrary(
-  share: string,
-): Promise<{items: unknown[]; folders: unknown[]; segments: Record<string, unknown[]>; updatedAt:string}> {
-  const result = await fetch(`${BASE}/student/library?share=${encodeURIComponent(share)}`);
+/** 학생은 로그인 없이 공개된 목록만 읽는다. */
+export async function fetchStudentLibrary():
+Promise<{items: unknown[]; folders: unknown[]; segments: Record<string, unknown[]>; updatedAt:string}> {
+  const result = await fetch(`${BASE}/student/library`, { cache:'no-store' });
   if (!result.ok) {
     const message = await result.json().then((x: {error?:string}) => x.error).catch(() => '');
     throw new Error(message || '학생용 듣기 자료를 불러오지 못했습니다');
@@ -222,10 +221,10 @@ export async function fetchStudentLibrary(
   return result.json() as Promise<{items: unknown[]; folders: unknown[]; segments: Record<string, unknown[]>; updatedAt:string}>;
 }
 
-/** 재생은 공유 스냅샷에 포함된 문항만 2시간짜리 서명 URL을 받을 수 있다. */
-export async function fetchStudentPlaybackUrl(share: string, itemId: string): Promise<string> {
-  const params = new URLSearchParams({ share, item: itemId });
-  const result = await fetch(`${BASE}/student/play?${params}`);
+/** 게시된 문항만 2시간짜리 R2 재생 링크를 발급받는다. */
+export async function fetchStudentPlaybackUrl(itemId: string): Promise<string> {
+  const params = new URLSearchParams({ item: itemId });
+  const result = await fetch(`${BASE}/student/play?${params}`, { cache:'no-store' });
   if (!result.ok) {
     const message = await result.json().then((x: {error?:string}) => x.error).catch(() => '');
     throw new Error(message || '학생용 음원을 재생할 수 없습니다');

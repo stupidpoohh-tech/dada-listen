@@ -699,31 +699,25 @@ export async function collectTranscription(itemId: string, mediaKey: string): Pr
 export async function publishMyStudentView(
   items: readonly Item[],
   folders: readonly Folder[],
-): Promise<{share: string; count: number}> {
+): Promise<{count: number}> {
+  // 비어 있는 목록도 게시해야 전체 삭제 후 학생 화면에서 사라진다.
   const candidates = items.filter(i => i.status === 'ready' && !!i.mediaKey);
-  if (candidates.length === 0) throw new Error('공유할 준비가 완료된 음원이 없습니다.');
   const segments: Record<string,Segment[]> = {};
-  // 항목 34개를 일시에 읽지 않고 4개씩 진행해 Neon 부하를 제한한다.
   for (let i = 0; i < candidates.length; i += 4) {
     const batch = candidates.slice(i, i + 4);
     const results = await Promise.all(batch.map(x => listSegments(x.id)));
     batch.forEach((it, j) => { segments[it.id] = results[j]!; });
   }
   const publishedItems = candidates.filter(it => segments[it.id]?.length);
-  if (!publishedItems.length) throw new Error('전사된 대본이 있는 문항이 없습니다.');
-  if (publishedItems.length !== candidates.length) {
-    throw new Error('일부 음원의 대본을 불러오지 못했습니다. 전사 완료 여부를 확인해 주세요.');
-  }
   return publishStudentLibrary(await requireToken(), {
     items:publishedItems, folders:[...folders], segments,
   });
 }
 
-/** 공유 링크를 가진 학생은 로그인 없이 해당 문항과 대본만 읽는다. */
-export async function loadStudentView(
-  share: string,
-): Promise<{items:Item[]; folders:Folder[]; segments:Record<string,Segment[]>}> {
-  const data = await fetchStudentLibrary(share);
+/** 학생은 로그인 없이 현재 강사가 게시한 문항과 스크립트만 가져온다. */
+export async function loadStudentView():
+Promise<{items:Item[]; folders:Folder[]; segments:Record<string,Segment[]>}> {
+  const data = await fetchStudentLibrary();
   return {
     items:data.items as Item[],
     folders:data.folders as Folder[],
@@ -731,6 +725,6 @@ export async function loadStudentView(
   };
 }
 
-export async function getStudentMediaUrl(share: string, itemId: string): Promise<string> {
-  return fetchStudentPlaybackUrl(share, itemId);
+export async function getStudentMediaUrl(itemId: string): Promise<string> {
+  return fetchStudentPlaybackUrl(itemId);
 }

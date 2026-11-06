@@ -120,10 +120,11 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   if (path === '/api/health') return health(env);
 
   // 학생은 링크의 비밀 토큰으로만 공유 스냅샷에 접근한다.
-  if (path === '/api/student/library' && method === 'GET') return studentLibrary(env, url);
+  if (path === '/api/student/library' && method === 'GET') return studentLibrary(env);
   if (path === '/api/student/play' && method === 'GET') return studentPlay(env, url);
   if (path === '/api/student/publish' && method === 'POST') {
     const teacher = await requireTeacher(request, env.NEON_DATA_API_URL);
+    requireApproved(teacher);
     return publishStudentView(request, env, teacher.id);
   }
 
