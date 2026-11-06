@@ -10,6 +10,8 @@ import UploadModal from './components/UploadModal';
 import ItemCard from './components/ItemCard';
 import {
   collectTranscription,
+  deleteAllMyItems,
+  deleteItem,
   ensureTeacher,
   listFolders,
   listItems,
@@ -39,6 +41,10 @@ export default function App() {
   const [loadError, setLoadError] = useState('');
 
   const [upload, setUpload] = useState(false);
+  const [deletingAll, setDeletingAll] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deletedProgress, setDeletedProgress] = useState(0);
+  const [deleteError, setDeleteError] = useState('');
   const [sel, setSel] = useState<string>('all');
   const [selTag, setSelTag] = useState<string | null>(null);
   const [navOpen, setNavOpen] = useState(false);
@@ -162,6 +168,50 @@ export default function App() {
   const curFolder = sel === 'all' ? null : folderOf(sel);
   const heading = sel === 'all' ? '전체 음성' : (curFolder?.name ?? '');
 
+  /** 본인 음원 1개 삭제. 삭제 후 반드시 목록을 다시 불러온다. */
+  const removeOne = async (item: Item) => {
+    if (!user || deletingAll || deletingId) return;
+    if (!window.confirm(`"${item.title}"을(를) 삭제할까요?\n관련 스크립트와 학습 자료가 삭제됩니다. 되돌릴 수 없습니다.`)) return;
+
+    setDeleteError('');
+    setDeletingId(item.id);
+    try {
+      await deleteItem(item.id);
+      await refresh();
+      toast('음성을 삭제했습니다');
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : '삭제에 실패했습니다');
+      await refresh();
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  /** 폴더/태그 필터와 관계없이 본인 전체 문항 및 R2 원본을 일괄 정리한다. */
+  const removeAll = async () => {
+    if (!user || deletingAll || deletingId) return;
+    const confirmText = `현재 계정의 모든 문항 ${items.length}개를 삭제할까요?\n\n` +
+      '모든 폴더가 대상입니다. 대본, 갭필 및 R2 원본 음원까지 영구 삭제되며 되돌릴 수 없습니다.';
+    if (!window.confirm(confirmText)) return;
+
+    setDeleteError('');
+    setDeletedProgress(0);
+    setDeletingAll(true);
+    try {
+      const summary = await deleteAllMyItems((count) => setDeletedProgress(count));
+      await refresh();
+      toast(`문항 ${summary.deletedItems}개, 음원 관련 파일 ${summary.deletedObjects}개를 삭제했습니다`);
+    } catch (e) {
+      setDeleteError(
+        (e instanceof Error ? e.message : '전체 삭제에 실패했습니다') +
+          ' 남은 문항 또는 파일이 있다면 다시 전체 삭제를 실행해 주세요.',
+      );
+      await refresh();
+    } finally {
+      setDeletingAll(false);
+    }
+  };
+
   const copyShare = () => {
     const url = location.origin + location.pathname + '#/view';
     navigator.clipboard
@@ -278,6 +328,16 @@ export default function App() {
           {loadError && (
             <div style={{ color: '#c8392b', fontSize: 13, marginBottom: 14 }}>{loadError}</div>
           )}
+          {deleteError && (
+            <div role="alert" style={{ color: '#c8392b', fontSize: 13, marginBottom: 14, lineHeight: 1.6 }}>
+              {deleteError}
+            </div>
+          )}
+          {deletingAll && (
+            <div role="status" style={{ fontSize: 13, color: 'var(--ink-2)', marginBottom: 12 }}>
+              전체 삭제 중… 문항 {deletedProgress}개 처리
+            </div>
+          )}
           {visible.length === 0 ? (
             <div className="empty">
               <div className="big"><Ic.wave s={26} /></div>
@@ -288,9 +348,15 @@ export default function App() {
                   : '곧 자료가 추가될 예정이에요.'}
               </p>
               {isAdmin && (
-                <button className="btn primary" onClick={() => setUpload(true)}>
-                  <Ic.upload /> 새 음성 추가
-                </button>
+                <>
+                  <button className="btn primary" onClick={() => setUpload(true)} disabled={deletingAll}>
+                    <Ic.upload /> 새 음성 추가
+                  </button>
+                  <button type="button" className="btn danger sm" style={{ marginTop: 12 }}
+                    disabled={deletingAll} onClick={() => void removeAll()}>
+                    <Ic.trash s={14} /> 잔여 음원 파일 정리
+                  </button>
+                </>
               )}
             </div>
           ) : (
@@ -298,6 +364,16 @@ export default function App() {
               <div className="list-head">
                 <span className="h">{heading}</span>
                 <span className="c">{visible.length}개</span>
+                <div style={{ flex: 1 }} />
+                {isAdmin && (
+                  <button type="button" className="btn danger sm"
+                    disabled={deletingAll || deletingId !== null}
+                    aria-label="내 계정의 모든 음성과 문항 삭제"
+                    onClick={() => void removeAll()}>
+                    <Ic.trash s={15} />
+                    {deletingAll ? `삭제 중 ${deletedProgress}개` : '전체 삭제'}
+                  </button>
+                )}
               </div>
               {visible.map((it) => (
                 <ItemCard
@@ -305,6 +381,8 @@ export default function App() {
                   item={it}
                   folder={folderOf(it.folderId)}
                   statusLabel={STATUS_LABEL[it.status]}
+                  onDelete={isAdmin ? removeOne : undefined}
+                  deleting={deletingAll || deletingId !== null}
                 />
               ))}
             </div>
@@ -312,7 +390,7 @@ export default function App() {
         </div>
       </main>
 
-      {upload && (
+      {upload && !deletingAll && (
         <UploadModal
           folders={folders}
           onClose={() => setUpload(false)}

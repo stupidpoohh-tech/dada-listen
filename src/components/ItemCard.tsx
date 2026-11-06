@@ -37,9 +37,11 @@ type Props = {
   item: Item;
   folder: Folder | undefined;
   statusLabel: string;
+  onDelete?: (item: Item) => void | Promise<void>;
+  deleting?: boolean;
 };
 
-export default function ItemCard({ item, folder, statusLabel }: Props) {
+export default function ItemCard({ item, folder, statusLabel, onDelete, deleting = false }: Props) {
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState<string | null>(null);
   const [segments, setSegments] = useState<Segment[] | null>(null);
@@ -177,6 +179,17 @@ export default function ItemCard({ item, folder, statusLabel }: Props) {
             ))}
           </div>
         </div>
+        {onDelete && (
+          <button type="button"
+            className="icon-btn"
+            aria-label={`${item.title} 삭제`}
+            title="문항 삭제"
+            disabled={deleting}
+            style={{ border: 'none', boxShadow: 'none', background: 'transparent', color: '#c8392b' }}
+            onClick={() => void onDelete(item)}>
+            <Ic.trash s={17} />
+          </button>
+        )}
         <button
           className="icon-btn"
           style={{ border: 'none', boxShadow: 'none', background: 'transparent' }}
