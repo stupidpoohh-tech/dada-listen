@@ -62,7 +62,7 @@ export async function readTranscriptFile(file: File): Promise<string> {
           if (!('str' in item) || !item.str.trim() || !('transform' in item)) continue;
           pieces.push({ x: item.transform[4], y: item.transform[5], value: item.str });
         }
-        const width = page.view[2] - page.view[0];
+        const width = (page.view[2] ?? 0) - (page.view[0] ?? 0);
         pages.push(orderPage(pieces, width));
         page.cleanup();
       }
