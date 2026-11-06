@@ -167,6 +167,20 @@ const del = await (await fetch(`${B}/api/media/delete`, {
 })).json();
 check('본인 파일 삭제', del.ok === true);
 
+// --- 본인 파일만 일괄 정리하는지 검증 ---
+const bFile = await upload('teacher_B', 1024*1024, 'other.mp3');
+const bPurge = await (await fetch(`${B}/api/media/purge-mine`, {
+  method: 'POST', headers: T('teacher_B'), body: '{}'
+})).json();
+check('B 전체 삭제는 B 경로만 정리', bPurge.ok === true && bPurge.deleted >= 1);
+const intact = await fetch(play.url, { headers: { range: 'bytes=0-3' } });
+check('B 전체 삭제 이후에도 A 재생 가능', intact.status === 206);
+const aPurge = await (await fetch(`${B}/api/media/purge-mine`, {
+  method: 'POST', headers: T('teacher_A'), body: '{}'
+})).json();
+check('A 전체 삭제는 A 파일 정리', aPurge.ok === true && aPurge.deleted >= 1);
+check('A 전체 삭제 후 재생 404', (await fetch(play.url)).status === 404);
+
 console.log(out.join('\n'));
 const fails = out.filter(l=>l.startsWith('❌')).length;
 console.log(`\n${out.length-fails} PASS / ${fails} FAIL`);

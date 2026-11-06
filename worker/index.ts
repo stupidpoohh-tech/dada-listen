@@ -24,6 +24,7 @@ import {
   createPlaybackUrl,
   createUpload,
   deleteObject,
+  purgeOwnMedia,
   stream,
   uploadPart,
 } from './media';
@@ -145,6 +146,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
       return createPlaybackUrl(request, env, ownerId, url.origin);
     }
     if (path === '/api/media/delete' && method === 'POST') return deleteObject(request, env, ownerId);
+    if (path === '/api/media/purge-mine' && method === 'POST') return purgeOwnMedia(env, ownerId);
   }
 
   if (path.startsWith('/api/transcribe')) {

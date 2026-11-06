@@ -15,6 +15,7 @@ import {
   createPlaybackUrl,
   createUpload,
   deleteObject,
+  purgeAllOwnedObjects,
   fetchTranscription,
   startTranscription as startTranscriptionApi,
   uploadPart,
@@ -340,21 +341,56 @@ export async function updateItem(
   if (error) throw error;
 }
 
-/** 아이템과 미디어를 함께 지운다. 세그먼트는 on delete cascade 로 따라간다. */
+/** 문항 삭제: DB 연관 자료는 FK cascade, 공유 음원은 마지막 문항에서만 지운다. */
 export async function deleteItem(id: string): Promise<void> {
   const item = await getItem(id);
-  const { error } = await db.from('items').delete().eq('id', id);
+  if (!item) throw new Error('삭제할 항목을 찾을 수 없습니다. 목록을 새로고침해 주세요.');
+  const { data, error } = await db.from('items').delete().eq('id', id).select('id');
   if (error) throw error;
+  if (!data?.length) throw new Error('항목이 삭제되지 않았습니다. 권한을 확인해 주세요.');
+  if (!item.mediaKey) return;
+  let shared: boolean;
+  try {
+    shared = await mediaUsedByOthers(item.mediaKey, id);
+  } catch {
+    throw new Error('문항은 삭제했지만 원본 음원 공유 여부 확인에 실패했습니다.');
+  }
+  if (!shared) {
+    try {
+      await deleteMedia(item.mediaKey);
+    } catch {
+      throw new Error('문항은 삭제했지만 R2 음원 정리에 실패했습니다. 전체 삭제로 잔여 파일을 정리할 수 있습니다.');
+    }
+  }
+}
 
-  // 행이 사라진 뒤에 파일을 지운다. 반대로 하면 삭제가 실패했을 때 재생 불가인
-  // 고아 행이 남는다.
-  //
-  // **아직 그 음원을 쓰는 아이템이 있으면 파일은 두고 간다.** 한 회차를 문항별로
-  // 나누면 17개가 같은 오브젝트를 가리키므로, 하나 지웠다고 지워버리면 나머지가
-  // 전부 깨진다 (0006_item_clips.sql).
-  if (!item?.mediaKey) return;
-  const shared = await mediaUsedByOthers(item.mediaKey, id).catch(() => true);
-  if (!shared) await deleteMedia(item.mediaKey).catch(() => {});
+/** 로그인한 강사 본인의 모든 문항과 관련 R2 원본/전사 임시 파일을 제거한다. */
+export async function deleteAllMyItems(
+  onProgress?: (removed: number) => void,
+): Promise<{ deletedItems: number; deletedObjects: number }> {
+  let removed = 0;
+  // PostgREST의 결과 개수 제한을 피하기 위해 배치별로 삭제하고 다시 조회한다.
+  for (let page = 0; page < 500; page += 1) {
+    const { data, error } = await db.from('items').select('id').limit(100);
+    if (error) throw error;
+    if (!data?.length) break;
+    for (const row of data) {
+      const { data: deleted, error: deleteError } = await db
+        .from('items').delete().eq('id', row.id).select('id');
+      if (deleteError) throw new Error(`문항 ${removed}개 삭제 후 중단: ${deleteError.message}`);
+      if (!deleted?.length) throw new Error('일부 문항을 삭제하지 못했습니다. 목록을 새로고침해 주세요.');
+      removed += deleted.length;
+      onProgress?.(removed);
+    }
+  }
+  const { data: remaining, error: checkError } = await db.from('items').select('id').limit(1);
+  if (checkError) throw checkError;
+  if (remaining?.length) throw new Error('DB에 문항이 남아 있습니다. 전체 삭제를 다시 시도해 주세요.');
+
+  // DB가 비어 있는 것까지 확인한 뒤, 서버에서 해당 강사의 버킷 경로만 삭제한다.
+  const { deleted } = await purgeAllOwnedObjects(await requireToken());
+  clearMediaUrlCache();
+  return { deletedItems: removed, deletedObjects: deleted };
 }
 
 /* ------------------------------------------------------------------ *

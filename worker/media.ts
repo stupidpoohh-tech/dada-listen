@@ -170,6 +170,23 @@ export async function deleteObject(request: Request, env: Env, ownerId: string):
   const body = await readJson<{ key?: string }>(request);
   if (!body.key) throw new HttpError(400, 'key 가 필요합니다');
   assertOwns(ownerId, body.key);
-  await env.MEDIA.delete(body.key);
+  await env.MEDIA.delete([body.key, `${body.key}.transcript.json`]);
   return json({ ok: true });
+}
+
+/**
+ * 로그인한 강사의 파일 경로만 일괄 삭제한다. DB를 모두 지운 후 호출한다.
+ * 삭제하는 동안 목록 cursor를 유지하지 않아 건너뛰는 파일이 없게 한다.
+ */
+export async function purgeOwnMedia(env: Env, ownerId: string): Promise<Response> {
+  const prefix = `${ownerId}/`;
+  let deleted = 0;
+  for (let i = 0; i < 100; i += 1) {
+    const listed = await env.MEDIA.list({ prefix, limit: 1000 });
+    const keys = listed.objects.map((o) => o.key);
+    if (!keys.length) return json({ ok: true, deleted });
+    await env.MEDIA.delete(keys);
+    deleted += keys.length;
+  }
+  throw new HttpError(503, `R2에서 ${deleted}개를 정리했지만 파일이 더 남았습니다. 다시 실행해 주세요.`);
 }

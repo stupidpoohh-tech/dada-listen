@@ -83,6 +83,15 @@ export function createPlaybackUrl(
   });
 }
 
+/** 현재 로그인한 강사의 R2 오브젝트만 일괄 정리한다. */
+export function purgeAllOwnedObjects(token: string): Promise<{ deleted: number }> {
+  return call('/media/purge-mine', token, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{}',
+  });
+}
+
 export function deleteObject(token: string, key: string): Promise<void> {
   return call<{ ok: true }>('/media/delete', token, {
     method: 'POST',
