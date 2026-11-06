@@ -15,10 +15,12 @@ import {
   ensureTeacher,
   listFolders,
   listItems,
+  loadStudentView,
+  publishMyStudentView,
   onAuthChange,
   signOut,
 } from './lib/store';
-import type { AuthUser, Folder, Item } from './lib/types';
+import type { AuthUser, Folder, Item, Segment } from './lib/types';
 
 /** 상태 배지 문구. ASR 파이프라인이 붙으면 실제로 움직인다 (D-002). */
 const STATUS_LABEL: Record<Item['status'], string> = {
@@ -39,6 +41,10 @@ export default function App() {
   const [items, setItems] = useState<Item[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState('');
+  const [studentSegments, setStudentSegments] = useState<Record<string, Segment[]>>({});
+  const [shareError, setShareError] = useState('');
+  const publishQueue = useRef<Promise<void>>(Promise.resolve());
+  const refreshSeq = useRef(0);
 
   const [upload, setUpload] = useState(false);
   const [deletingAll, setDeletingAll] = useState(false);
@@ -73,23 +79,67 @@ export default function App() {
     [],
   );
 
-  /** 목록을 다시 읽는다. 업로드·전사 뒤에도 부른다. */
-  const refresh = useCallback(async () => {
-    try {
-      const [f, i] = await Promise.all([listFolders(), listItems()]);
-      setFolders(f);
-      setItems(i);
-      setLoadError('');
-    } catch (e) {
-      setLoadError(e instanceof Error ? e.message : '자료를 불러오지 못했어요');
-    }
+
+  /** 같은 계정에서 목록이 바뀌어도 학생용 R2 게시 순서가 뒤집히지 않게 직렬화한다. */
+  const publish = useCallback((currentItems: Item[], currentFolders: Folder[]): Promise<void> => {
+    const next = publishQueue.current.then(async () => {
+      await publishMyStudentView(currentItems, currentFolders);
+      setShareError('');
+    });
+    publishQueue.current = next.catch(() => {});
+    return next;
   }, []);
 
-  // 콘텐츠는 RLS 로 강사 본인 것만 내려온다. 로그인 전에는 부르지 않는다.
+  /** 관리자 DB(RLS 적용)와 학생용 공개 스냅샷을 확실히 분리해 불러온다. */
+  const refresh = useCallback(async () => {
+    const seq = ++refreshSeq.current;
+    try {
+      if (mode === 'view') {
+        const data = await loadStudentView();
+        if (seq !== refreshSeq.current) return;
+        setFolders(data.folders);
+        setItems(data.items);
+        setStudentSegments(data.segments);
+        setLoadError('');
+      } else if (user) {
+        const [f, i] = await Promise.all([listFolders(), listItems()]);
+        if (seq !== refreshSeq.current) return;
+        setFolders(f);
+        setItems(i);
+        setStudentSegments({});
+        setLoadError('');
+        // 기존 업로드 34개도 관리자 화면에 접속하면 자동 게시된다.
+        void publish(i, f).catch(e =>
+          setShareError(e instanceof Error ? e.message : '학생용 목록 동기화 실패'),
+        );
+      }
+    } catch (e) {
+      if (seq !== refreshSeq.current) return;
+      if (mode === 'view') {
+        setFolders([]);
+        setItems([]);
+        setStudentSegments({});
+      }
+      setLoadError(e instanceof Error ? e.message : '자료를 불러오지 못했어요');
+    }
+  }, [mode, user, publish]);
+
   useEffect(() => {
+    setSel('all');
+    setSelTag(null);
+  }, [mode]);
+
+  useEffect(() => {
+    if (mode === 'view') {
+      let active = true;
+      setLoaded(false);
+      void refresh().finally(() => { if (active) setLoaded(true); });
+      return () => { active = false; };
+    }
     if (!user) {
       setFolders([]);
       setItems([]);
+      setStudentSegments({});
       setLoaded(true);
       return;
     }
@@ -97,9 +147,6 @@ export default function App() {
     setLoaded(false);
     void (async () => {
       try {
-        // 강사 프로필을 먼저 만든다. teachers 행이 없으면 owner_id 는 채워져도
-        // 승인 여부(teachers.approved)를 볼 데가 없어서 업로드가 막힌다.
-        // upsert 라 두 번째 로그인부터는 아무 일도 하지 않는다.
         await ensureTeacher(user.email?.split('@')[0] ?? '강사');
       } catch (e) {
         console.error('[teacher]', e);
@@ -108,10 +155,8 @@ export default function App() {
       await refresh();
       if (alive) setLoaded(true);
     })();
-    return () => {
-      alive = false;
-    };
-  }, [user, refresh]);
+    return () => { alive = false; };
+  }, [mode, user, refresh]);
 
   /**
    * 전사가 끝났는지 주기적으로 확인한다.
@@ -121,7 +166,7 @@ export default function App() {
     const waiting = items.filter(
       (i) => i.mediaKey && (i.status === 'pending' || i.status === 'processing'),
     );
-    if (waiting.length === 0) return;
+    if (mode !== 'admin' || !user || waiting.length === 0) return;
 
     let alive = true;
     const timer = setInterval(() => {
@@ -143,7 +188,7 @@ export default function App() {
       alive = false;
       clearInterval(timer);
     };
-  }, [items, refresh]);
+  }, [items, refresh, mode, user]);
 
   if (!authReady || !loaded) {
     return (
@@ -210,6 +255,11 @@ export default function App() {
     } finally {
       setDeletingAll(false);
     }
+  };
+
+  const openStudentView = () => {
+    // 공개 스냅샷이 올라간 다음 전환한다. 첫 접속 직후에도 빈 목록이 보이지 않는다.
+    void publishQueue.current.then(() => { location.hash = '#/view'; });
   };
 
   const copyShare = () => {
@@ -304,7 +354,7 @@ export default function App() {
           <div className="spacer" />
           {isAdmin ? (
             <>
-              <button className="btn ghost sm" onClick={() => { location.hash = '#/view'; }}>
+              <button className="btn ghost sm" onClick={openStudentView}>
                 <Ic.eye /> <span className="lbl">학생 보기</span>
               </button>
               <button className="btn sm" onClick={copyShare}>
@@ -327,6 +377,11 @@ export default function App() {
         <div className="content">
           {loadError && (
             <div style={{ color: '#c8392b', fontSize: 13, marginBottom: 14 }}>{loadError}</div>
+          )}
+          {isAdmin && shareError && (
+            <div role="alert" style={{ color: '#c8392b', fontSize: 13, marginBottom: 14, lineHeight: 1.6 }}>
+              학생용 자료 동기화 오류: {shareError}
+            </div>
           )}
           {deleteError && (
             <div role="alert" style={{ color: '#c8392b', fontSize: 13, marginBottom: 14, lineHeight: 1.6 }}>
@@ -377,12 +432,14 @@ export default function App() {
               </div>
               {visible.map((it) => (
                 <ItemCard
-                  key={it.id}
+                  key={mode + ':' + it.id}
                   item={it}
                   folder={folderOf(it.folderId)}
                   statusLabel={STATUS_LABEL[it.status]}
                   onDelete={isAdmin ? removeOne : undefined}
                   deleting={deletingAll || deletingId !== null}
+                  studentView={!isAdmin}
+                  studentSegments={!isAdmin ? studentSegments[it.id] : undefined}
                 />
               ))}
             </div>

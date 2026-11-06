@@ -13,7 +13,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Ic, fmt } from './icons';
-import { getMediaUrl, listSegments } from '../lib/store';
+import { getMediaUrl, getStudentMediaUrl, listSegments } from '../lib/store';
 import { LEVELS, normalize, selectGaps, tokenize } from '../lib/gapfill';
 import type { GapRef, Level } from '../lib/gapfill';
 import type { Folder, Item, Segment } from '../lib/types';
@@ -39,9 +39,11 @@ type Props = {
   statusLabel: string;
   onDelete?: (item: Item) => void | Promise<void>;
   deleting?: boolean;
+  studentView?: boolean;
+  studentSegments?: Segment[];
 };
 
-export default function ItemCard({ item, folder, statusLabel, onDelete, deleting = false }: Props) {
+export default function ItemCard({ item, folder, statusLabel, onDelete, deleting = false, studentView = false, studentSegments }: Props) {
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState<string | null>(null);
   const [segments, setSegments] = useState<Segment[] | null>(null);
@@ -73,8 +75,8 @@ export default function ItemCard({ item, folder, statusLabel, onDelete, deleting
     void (async () => {
       try {
         const [segs, u] = await Promise.all([
-          listSegments(item.id),
-          getMediaUrl(item.mediaKey),
+          studentView ? Promise.resolve(studentSegments ?? []) : listSegments(item.id),
+          studentView ? getStudentMediaUrl(item.id) : getMediaUrl(item.mediaKey),
         ]);
         if (!alive) return;
         setSegments(segs);
@@ -86,7 +88,7 @@ export default function ItemCard({ item, folder, statusLabel, onDelete, deleting
       }
     })();
     return () => { alive = false; };
-  }, [open, segments, item.id, item.mediaKey]);
+  }, [open, segments, item.id, item.mediaKey, studentView, studentSegments]);
 
   // 재생 속도는 엘리먼트 속성이라 상태만 바꿔서는 안 먹는다.
   useEffect(() => {
