@@ -33,6 +33,8 @@ export type SplitOptions = {
   expected: number;
   /** 마지막 덩어리에 문제가 두 개 붙는지 (16~17번). */
   mergeLastTwo: boolean;
+  /** 16~17번처럼 한 녹음을 공유하는 두 문항을 각각 독립된 카드로 생성한다. */
+  separateLastPair?: boolean;
   /** 이보다 짧은 공백은 문항 경계로 보지 않는다. 대화 중의 숨 쉬는 틈이다. */
   minGapSec?: number;
 };
@@ -100,9 +102,25 @@ export function splitIntoQuestions(
   if (expected === 1) return [block(segments, 0, segments.length - 1, '1', false)];
 
   const byMarker = splitByMarkers(segments, expected);
-  if (byMarker) return byMarker;
+  const grouped = byMarker ?? splitByGaps(segments, expected, opts);
+  return opts.separateLastPair ? separateLastPair(grouped) : grouped;
+}
 
-  return splitByGaps(segments, expected, opts);
+/**
+ * 16~17번은 듣기 지문이 하나이지만 시험 문항은 두 개다.
+ * 미디어를 복사하지 않고, 같은 구간과 세그먼트를 가리키는 두 문항을 만든다.
+ * 메타데이터만 복제하므로 문장 타임스탬프도 원본 기준으로 유지된다.
+ */
+function separateLastPair(blocks: QuestionBlock[]): QuestionBlock[] {
+  const last = blocks.at(-1);
+  if (!last) return blocks;
+  const match = /^(\d{1,2})~(\d{1,2})$/.exec(last.no);
+  if (!match || Number(match[2]) !== Number(match[1]) + 1) return blocks;
+  return [
+    ...blocks.slice(0, -1),
+    { ...last, no: match[1]! },
+    { ...last, no: match[2]! },
+  ];
 }
 
 /** 한국어 안내가 시작하는 발화들을 경계로 삼는다. */

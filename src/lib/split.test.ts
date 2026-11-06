@@ -259,3 +259,32 @@ describe('실제 모의고사 음원 구조', () => {
     expect(b17[15]!.startSec).toBeCloseTo(1160.87, 1);
   });
 });
+
+
+describe('16~17번 공동 지문을 17개 독립 문항으로 등록', () => {
+  for (const markers of [true, false]) {
+    it(`${markers ? '번호 안내' : '무음 구간'} 기준에서도 마지막을 두 문항으로 복제한다`, () => {
+      const segments = mockExam({ markers, count: 16 });
+      const blocks = splitIntoQuestions(segments, {
+        expected: 16, mergeLastTwo: true, separateLastPair: true,
+      });
+      expect(blocks).toHaveLength(17);
+      expect(blocks.map((b) => b.no)).toEqual(
+        Array.from({ length: 17 }, (_, i) => String(i + 1)),
+      );
+      expect(blocks[15]!.startSec).toBe(blocks[16]!.startSec);
+      expect(blocks[15]!.endSec).toBe(blocks[16]!.endSec);
+      expect(blocks[15]!.segFrom).toBe(blocks[16]!.segFrom);
+      expect(blocks[15]!.segTo).toBe(blocks[16]!.segTo);
+    });
+  }
+
+  it('마지막이 공동 지문이 아니면 문항을 임의로 복제하지 않는다', () => {
+    const segments = mockExam({ markers: false, count: 16 });
+    const blocks = splitIntoQuestions(segments, {
+      expected: 16, mergeLastTwo: false, separateLastPair: true,
+    });
+    expect(blocks).toHaveLength(16);
+    expect(blocks.at(-1)!.no).toBe('16');
+  });
+});

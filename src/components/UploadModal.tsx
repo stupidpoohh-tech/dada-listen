@@ -152,7 +152,11 @@ export default function UploadModal({ folders, onClose, onChanged, toast }: Prop
   const blocks = useMemo(
     () =>
       phase.kind === 'done' && splitOn
-        ? splitIntoQuestions(phase.segments, { expected: splitCount, mergeLastTwo })
+        ? splitIntoQuestions(phase.segments, {
+            expected: splitCount,
+            mergeLastTwo: mergeLastTwo && splitCount === 16,
+            separateLastPair: mergeLastTwo && splitCount === 16,
+          })
         : [],
     [phase, splitOn, splitCount, mergeLastTwo],
   );
@@ -449,8 +453,13 @@ function SplitReview({
           style={{ width: 72, padding: '6px 8px', textAlign: 'center' }}
         />
         <label style={{ fontSize: 12.5, color: 'var(--ink-2)', display: 'flex', alignItems: 'center', gap: 6 }}>
-          <input type="checkbox" checked={mergeLastTwo} onChange={(e) => onMergeLastTwo(e.target.checked)} />
-          마지막은 두 문제 (16~17번)
+          <input
+            type="checkbox"
+            checked={mergeLastTwo && count === 16}
+            disabled={count !== 16}
+            onChange={(e) => onMergeLastTwo(e.target.checked)}
+          />
+          16·17번은 같은 지문으로 각각 등록
         </label>
         <div style={{ flex: 1 }} />
         <button className="btn ghost sm" onClick={onOff}>나누지 않기</button>
@@ -460,6 +469,9 @@ function SplitReview({
         {guessed
           ? '한국어 안내를 못 찾아서 문항 사이 공백으로 나눴어요. 아래를 확인해 주세요.'
           : '한국어 안내에서 문항 번호를 읽었어요.'}
+        {count === 16 && mergeLastTwo && (
+          <span> 공동 지문은 16번과 17번 두 개의 독립 문항으로 표시됩니다.</span>
+        )}
         {short > 0 && (
           <span style={{ color: '#c8392b' }}>
             {' '}너무 짧은 구간이 {short}개 있어요 — 개수를 줄여 보세요.
