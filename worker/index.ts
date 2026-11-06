@@ -12,6 +12,7 @@
  * 비밀은 wrangler secret put 으로 넣고 env 에서 읽는다 — 코드에 적지 않는다. */
 
 import { requireApproved, requireTeacher } from './auth';
+import { publishStudentView, studentLibrary, studentPlay } from './student';
 import { errorResponse, json, HttpError } from './http';
 import {
   startTranscription,
@@ -117,6 +118,14 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   const method = request.method;
 
   if (path === '/api/health') return health(env);
+
+  // 학생은 링크의 비밀 토큰으로만 공유 스냅샷에 접근한다.
+  if (path === '/api/student/library' && method === 'GET') return studentLibrary(env, url);
+  if (path === '/api/student/play' && method === 'GET') return studentPlay(env, url);
+  if (path === '/api/student/publish' && method === 'POST') {
+    const teacher = await requireTeacher(request, env.NEON_DATA_API_URL);
+    return publishStudentView(request, env, teacher.id);
+  }
 
   // 재생만 서명 URL 로 연다. 로그인 토큰을 <audio src> 에 실을 수 없기 때문이다.
   if (path === '/api/media/stream' && method === 'GET') return stream(request, env, url);
