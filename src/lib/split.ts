@@ -131,7 +131,18 @@ function splitByMarkers(
   );
 }
 
-/** 공백이 긴 순서대로 (expected - 1) 군데를 끊는다. */
+/**
+ * 공백으로 나눈다.
+ *
+ * **"가장 긴 N-1개를 고른다"로는 안 된다.** 실제 모의고사 음원을 재 보니 문항
+ * 사이 공백이 전부 9.2~9.4초로 거의 같았다(18개). 사실상 동점이라 상위 N-1 을
+ * 고르면 어느 것이 뽑히는지가 소수점에 좌우되고, 실제로 16~17번 세트와 뒤쪽
+ * 안내 방송이 한 덩어리로 뭉쳤다.
+ *
+ * 그래서 **기준을 넘는 공백에서는 전부 끊고**, 개수가 많으면 짧은 덩어리부터
+ * 이웃에 합친다. 끝에 붙는 안내 방송("이제 듣기 문제가 끝났습니다")처럼 짧은
+ * 꼬리가 자연스럽게 앞 문항으로 흡수된다.
+ */
 function splitByGaps(
   segments: readonly Segment[],
   expected: number,
@@ -139,30 +150,96 @@ function splitByGaps(
 ): QuestionBlock[] {
   const minGap = opts.minGapSec ?? DEFAULT_MIN_GAP_SEC;
 
-  const gaps: { afterIdx: number; len: number }[] = [];
+  const lens: number[] = [];
   for (let i = 0; i + 1 < segments.length; i += 1) {
-    const len = segments[i + 1]!.startSec - segments[i]!.endSec;
-    if (len >= minGap) gaps.push({ afterIdx: i, len });
+    lens.push(segments[i + 1]!.startSec - segments[i]!.endSec);
   }
 
-  // 길이 내림차순. 같으면 앞선 것을 먼저 — 정렬이 흔들리면 결과도 흔들린다.
-  gaps.sort((a, b) => (b.len - a.len) || (a.afterIdx - b.afterIdx));
+  // 1) 기준을 데이터에서 찾는다. 고정값으로는 안 된다 — 실제 음원에서 대화 중
+  //    틈이 1.82초까지 갔고, 기본 1.2초로는 문항 안에서도 잘렸다.
+  const threshold = chooseThreshold(lens, expected, minGap);
 
-  const cuts = gaps
-    .slice(0, expected - 1)
-    .map((g) => g.afterIdx)
-    .sort((a, b) => a - b);
-
-  const blocks: QuestionBlock[] = [];
-  let from = 0;
-  for (const cut of cuts) {
-    blocks.push(block(segments, from, cut, String(blocks.length + 1), false));
-    from = cut + 1;
+  // 2) 기준을 넘는 공백에서 전부 끊는다.
+  const cuts: number[] = [];
+  for (let i = 0; i < lens.length; i += 1) {
+    if (lens[i]! >= threshold) cuts.push(i);
   }
-  blocks.push(block(segments, from, segments.length - 1, String(blocks.length + 1), false));
+
+  // 3) 개수가 많으면 가장 짧은 덩어리를 이웃에 합친다.
+  //    합칠 쪽은 더 짧은 이웃. 한쪽밖에 없으면 그쪽. 같으면 앞쪽 —
+  //    규칙이 흔들리면 같은 입력에서 다른 결과가 나온다.
+  while (cuts.length + 1 > expected && cuts.length > 0) {
+    const bounds = toBounds(cuts, segments.length);
+    let worst = 0;
+    let worstLen = Infinity;
+    for (let b = 0; b < bounds.length; b += 1) {
+      const [from, to] = bounds[b]!;
+      const len = segments[to]!.endSec - segments[from]!.startSec;
+      if (len < worstLen) {
+        worstLen = len;
+        worst = b;
+      }
+    }
+    const prevLen = worst > 0 ? spanOf(segments, bounds[worst - 1]!) : Infinity;
+    const nextLen = worst + 1 < bounds.length ? spanOf(segments, bounds[worst + 1]!) : Infinity;
+    // 앞 이웃에 붙이려면 내 왼쪽 경계를, 뒤에 붙이려면 오른쪽 경계를 지운다.
+    const removeIdx = prevLen <= nextLen ? worst - 1 : worst;
+    cuts.splice(removeIdx, 1);
+  }
+
+  const blocks = toBounds(cuts, segments.length).map((b, i) =>
+    block(segments, b[0], b[1], String(i + 1), false),
+  );
 
   return opts.mergeLastTwo ? labelLastAsPair(blocks) : blocks;
 }
+
+/**
+ * 공백 길이 분포에서 "문항 사이"와 "말하다 쉬는 틈"을 가르는 기준을 찾는다.
+ *
+ * 실제 모의고사 음원을 재 보니 둘이 뚜렷하게 갈렸다 — 문항 사이는 9.2~9.4초,
+ * 대화 중 틈은 최대 1.82초. 그 사이(2~6초)는 아예 비어 있었다. 그래서 길이를
+ * 내림차순으로 늘어놓고 **가장 큰 낙차**를 찾는다.
+ *
+ * 기대 개수 근처만 본다. 전체에서 찾으면 아주 짧은 틈들 사이의 낙차에 끌려간다.
+ * 낙차가 뚜렷하지 않으면(2배 미만) 분포를 믿지 않고 최소 기준을 쓴다.
+ */
+function chooseThreshold(lens: readonly number[], expected: number, minGap: number): number {
+  const desc = [...lens].sort((a, b) => b - a);
+  const need = expected - 1;
+  if (desc.length <= need) return minGap;
+
+  let best = minGap;
+  let bestRatio = 1;
+  const hi = Math.min(desc.length - 1, need * 2 + 4);
+  for (let i = Math.max(1, need); i <= hi; i += 1) {
+    const above = desc[i - 1]!;
+    const below = desc[i]!;
+    if (below <= 0.01) continue;
+    const ratio = above / below;
+    if (ratio > bestRatio) {
+      bestRatio = ratio;
+      best = above;
+    }
+  }
+  // 최소 기준 아래로는 절대 내려가지 않는다. 호출자가 정한 하한이다.
+  return bestRatio >= 2 ? Math.max(best, minGap) : minGap;
+}
+
+/** 자른 자리 목록을 [시작, 끝] 구간 목록으로. */
+function toBounds(cuts: readonly number[], total: number): [number, number][] {
+  const bounds: [number, number][] = [];
+  let from = 0;
+  for (const cut of cuts) {
+    bounds.push([from, cut]);
+    from = cut + 1;
+  }
+  bounds.push([from, total - 1]);
+  return bounds;
+}
+
+const spanOf = (segments: readonly Segment[], [from, to]: [number, number]) =>
+  segments[to]!.endSec - segments[from]!.startSec;
 
 /** 마지막 덩어리에 문제 두 개가 붙는 경우(16~17번) 이름만 바꾼다. */
 function labelLastAsPair(blocks: QuestionBlock[]): QuestionBlock[] {

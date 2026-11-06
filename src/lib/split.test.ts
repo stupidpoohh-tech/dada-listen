@@ -173,3 +173,89 @@ describe('가장자리', () => {
       .toHaveLength(3);
   });
 });
+
+/* ------------------------------------------------------------------ *
+ * 실제 모의고사 음원으로 확인한 구조
+ *
+ * 2022학년도 9월 고2 영어 듣기(23분 48초)를 ffmpeg 로 재서 얻은 실제 값이다.
+ * 문항 사이 공백은 18군데, 전부 9.2~9.4초. 대화 중의 틈은 최대 1.82초로
+ * 둘 사이에 겹치는 구간이 아예 없었다.
+ *
+ * 여기서 "가장 긴 N-1개를 고르는" 옛 방식이 깨졌다. 공백이 사실상 동점이라
+ * 어느 것이 뽑히는지가 소수점에 좌우됐고, 16~17번 세트와 뒤쪽 안내 방송이
+ * 한 덩어리로 뭉쳤다. 그 회귀를 여기서 막는다.
+ * ------------------------------------------------------------------ */
+
+/** ffmpeg silencedetect 로 측정한 음성 덩어리 18개 (초). */
+const REAL_SPANS: [number, number][] = [
+  [0, 55.03], [64.35, 120.52], [129.87, 207.86], [217.19, 290.54],
+  [299.9, 379.69], [389.03, 474.6], [483.95, 547.82], [557.15, 636.28],
+  [645.63, 729.4], [738.75, 826.6], [835.93, 863.06], [872.4, 906.2],
+  [915.55, 984.43], [993.79, 1075.75], [1085.11, 1151.53],
+  [1160.87, 1324.34],  // 16~17번 세트 (긴 지문, 2분 43초)
+  [1333.61, 1342.71],  // 안내 방송
+  [1351.9, 1353.13],   // 짧은 꼬리
+];
+
+/** 각 덩어리를 발화 몇 개로 쪼갠다. 발화 사이 틈은 실측 최대치인 1.8초 이내. */
+function realExamSegments(): Segment[] {
+  const out: Segment[] = [];
+  for (const [s, e] of REAL_SPANS) {
+    const span = e - s;
+    const n = span > 20 ? 3 : 1;
+    const each = (span - 1.4 * (n - 1)) / n;
+    for (let k = 0; k < n; k += 1) {
+      const a = s + k * (each + 1.4);
+      out.push(seg(a, a + each, `utterance ${out.length}`));
+    }
+  }
+  return out.map((x, i) => ({ ...x, idx: i }));
+}
+
+describe('실제 모의고사 음원 구조', () => {
+  const segments = realExamSegments();
+  const blocks = splitIntoQuestions(segments, { expected: 16, mergeLastTwo: true });
+
+  it('16덩어리로 나뉜다', () => {
+    expect(blocks).toHaveLength(16);
+  });
+
+  it('1~15번 경계가 실측값과 같다', () => {
+    for (let i = 0; i < 15; i += 1) {
+      expect(blocks[i]!.startSec).toBeCloseTo(REAL_SPANS[i]![0], 1);
+      expect(blocks[i]!.endSec).toBeCloseTo(REAL_SPANS[i]![1], 1);
+    }
+  });
+
+  it('마지막은 16~17번 세트이고, 뒤 안내 방송까지 흡수한다', () => {
+    const last = blocks[15]!;
+    expect(last.no).toBe('16~17');
+    expect(last.startSec).toBeCloseTo(1160.87, 1); // 세트 지문 시작
+    expect(last.endSec).toBeCloseTo(1353.13, 1);   // 꼬리까지
+  });
+
+  it('16~17번 세트가 15번에 뭉개지지 않는다', () => {
+    // 옛 방식이 실제로 저질렀던 실수. 15번이 3분짜리가 돼 버렸다.
+    expect(blocks[14]!.endSec).toBeLessThan(1160);
+    expect(blocks[14]!.endSec - blocks[14]!.startSec).toBeLessThan(120);
+  });
+
+  it('짧은 문항(11·12번, 27초와 34초)도 살아남는다', () => {
+    expect(blocks[10]!.endSec - blocks[10]!.startSec).toBeCloseTo(27.13, 0);
+    expect(blocks[11]!.endSec - blocks[11]!.startSec).toBeCloseTo(33.8, 0);
+  });
+
+  it('덩어리가 겹치지도 비지도 않는다', () => {
+    for (let i = 0; i + 1 < blocks.length; i += 1) {
+      expect(blocks[i]!.segTo + 1).toBe(blocks[i + 1]!.segFrom);
+    }
+    expect(blocks[0]!.segFrom).toBe(0);
+    expect(blocks.at(-1)!.segTo).toBe(segments.length - 1);
+  });
+
+  it('17개로 달라고 하면 안내 방송이 떨어져 나온다', () => {
+    const b17 = splitIntoQuestions(segments, { expected: 17, mergeLastTwo: false });
+    expect(b17).toHaveLength(17);
+    expect(b17[15]!.startSec).toBeCloseTo(1160.87, 1);
+  });
+});
