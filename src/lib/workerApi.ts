@@ -197,3 +197,39 @@ export async function fetchTranscription(
   }
   return (await res.json()) as TranscriptionState;
 }
+
+/** 관리자만: 현재 업로드한 문항을 비공개 R2 공유 스냅샷으로 게시한다. */
+export function publishStudentLibrary(
+  token: string,
+  payload: { items: unknown[]; folders: unknown[]; segments: Record<string, unknown[]> },
+): Promise<{share: string; count: number}> {
+  return call('/student/publish', token, {
+    method: 'POST',
+    headers: {'content-type':'application/json'},
+    body: JSON.stringify(payload),
+  });
+}
+
+/** 로그인 없이 공유 링크 토큰으로 자료를 가져온다. */
+export async function fetchStudentLibrary(
+  share: string,
+): Promise<{items: unknown[]; folders: unknown[]; segments: Record<string, unknown[]>; updatedAt:string}> {
+  const result = await fetch(`${BASE}/student/library?share=${encodeURIComponent(share)}`);
+  if (!result.ok) {
+    const message = await result.json().then((x: {error?:string}) => x.error).catch(() => '');
+    throw new Error(message || '학생용 듣기 자료를 불러오지 못했습니다');
+  }
+  return result.json() as Promise<{items: unknown[]; folders: unknown[]; segments: Record<string, unknown[]>; updatedAt:string}>;
+}
+
+/** 재생은 공유 스냅샷에 포함된 문항만 2시간짜리 서명 URL을 받을 수 있다. */
+export async function fetchStudentPlaybackUrl(share: string, itemId: string): Promise<string> {
+  const params = new URLSearchParams({ share, item: itemId });
+  const result = await fetch(`${BASE}/student/play?${params}`);
+  if (!result.ok) {
+    const message = await result.json().then((x: {error?:string}) => x.error).catch(() => '');
+    throw new Error(message || '학생용 음원을 재생할 수 없습니다');
+  }
+  const body = await result.json() as {url:string};
+  return body.url;
+}
