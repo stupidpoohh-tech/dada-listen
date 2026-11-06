@@ -15,6 +15,9 @@ import {
   createPlaybackUrl,
   createUpload,
   deleteObject,
+  fetchStudentLibrary,
+  fetchStudentPlaybackUrl,
+  publishStudentLibrary,
   purgeAllOwnedObjects,
   fetchTranscription,
   startTranscription as startTranscriptionApi,
@@ -686,4 +689,48 @@ export async function collectTranscription(itemId: string, mediaKey: string): Pr
   });
   await fetchTranscription(token, mediaKey, true).catch(() => {});
   return true;
+}
+
+/* ------------------------------------------------------------------ *
+ * 학생 공유용 R2 스냅샷 — 익명 데이터베이스 권한은 열지 않는다.
+ * ------------------------------------------------------------------ */
+
+/** 현재 로그인한 강사의 준비된 문항을 학생에게 게시한다. 기존 공유 URL은 유지된다. */
+export async function publishMyStudentView(
+  items: readonly Item[],
+  folders: readonly Folder[],
+): Promise<{share: string; count: number}> {
+  const candidates = items.filter(i => i.status === 'ready' && !!i.mediaKey);
+  if (candidates.length === 0) throw new Error('공유할 준비가 완료된 음원이 없습니다.');
+  const segments: Record<string,Segment[]> = {};
+  // 항목 34개를 일시에 읽지 않고 4개씩 진행해 Neon 부하를 제한한다.
+  for (let i = 0; i < candidates.length; i += 4) {
+    const batch = candidates.slice(i, i + 4);
+    const results = await Promise.all(batch.map(x => listSegments(x.id)));
+    batch.forEach((it, j) => { segments[it.id] = results[j]!; });
+  }
+  const publishedItems = candidates.filter(it => segments[it.id]?.length);
+  if (!publishedItems.length) throw new Error('전사된 대본이 있는 문항이 없습니다.');
+  if (publishedItems.length !== candidates.length) {
+    throw new Error('일부 음원의 대본을 불러오지 못했습니다. 전사 완료 여부를 확인해 주세요.');
+  }
+  return publishStudentLibrary(await requireToken(), {
+    items:publishedItems, folders:[...folders], segments,
+  });
+}
+
+/** 공유 링크를 가진 학생은 로그인 없이 해당 문항과 대본만 읽는다. */
+export async function loadStudentView(
+  share: string,
+): Promise<{items:Item[]; folders:Folder[]; segments:Record<string,Segment[]>}> {
+  const data = await fetchStudentLibrary(share);
+  return {
+    items:data.items as Item[],
+    folders:data.folders as Folder[],
+    segments:data.segments as Record<string,Segment[]>,
+  };
+}
+
+export async function getStudentMediaUrl(share: string, itemId: string): Promise<string> {
+  return fetchStudentPlaybackUrl(share, itemId);
 }
