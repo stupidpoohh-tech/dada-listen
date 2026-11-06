@@ -38,6 +38,12 @@ NEON_AUTH_URL = "https://ep-little-recipe-azfa36uc.neonauth.c-3.ap-southeast-1.a
 NEON_DATA_API_URL = "https://ep-little-recipe-azfa36uc.apirest.c-3.ap-southeast-1.aws.neon.tech/neondb/rest/v1"
 R2_BUCKET = "dada-media"
 
+# 전사 언어.
+#   "en"    영어만. 한국어 안내는 뭉개진다 (기본).
+#   "multi" 한국어 안내까지 받아 적는다. 문항을 나눌 때 번호를 정확히 읽으려면 이쪽.
+# 바꾸고 전사를 한 번 돌려 스크립트가 멀쩡한지 확인한 뒤에 쓰세요. 한 줄만 되돌리면 됩니다.
+DEEPGRAM_LANGUAGE = "en"
+
 # [비밀] 아래 셋은 `wrangler secret put <이름>` 으로 넣는다.
 # 암호화 비밀은 배포해도 지워지지 않는다 (일반 변수와 다른 점).
 #   wrangler secret put DEEPGRAM_API_KEY

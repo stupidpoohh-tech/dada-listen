@@ -42,6 +42,8 @@ export interface Env {
 
   /** 비밀 (wrangler secret put). 없을 수 있으므로 optional 로 둔다. */
   DEEPGRAM_API_KEY?: string;
+  /** 전사 언어. 기본 en. 한국어 안내까지 받아 적으려면 multi (wrangler.toml 참조). */
+  DEEPGRAM_LANGUAGE?: string;
   MEDIA_TOKEN_SECRET?: string;
   /**
    * 마이그레이션 적용용. Worker 는 쓰지 않는다 — 전사 결과도 클라이언트가

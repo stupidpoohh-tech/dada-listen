@@ -111,7 +111,11 @@ export async function startTranscription(
   dg.searchParams.set('smart_format', 'true'); // 문장부호·대소문자·문단
   dg.searchParams.set('utterances', 'true');   // 발화 단위 = 우리 세그먼트
   dg.searchParams.set('punctuate', 'true');
-  dg.searchParams.set('language', 'en');
+  // 기본은 en. 모의고사 음원처럼 한국어 안내("12번. 다음을 듣고…")가 섞여 있으면
+  // multi 로 바꾸면 그 안내까지 받아 적어서, 문항을 나눌 때 번호를 정확히 읽는다
+  // (src/lib/split.ts). en 으로 두면 안내가 영어로 뭉개져 공백 길이로만 나눈다.
+  // 실제 Deepgram 에서 multi 를 아직 확인하지 못해 기본값은 바꾸지 않았다.
+  dg.searchParams.set('language', env.DEEPGRAM_LANGUAGE || 'en');
   dg.searchParams.set('callback', callback.toString());
   dg.searchParams.set('callback_method', 'post');
 

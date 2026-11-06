@@ -46,8 +46,10 @@ export default function ItemCard({ item, folder, statusLabel }: Props) {
   const [loadError, setLoadError] = useState('');
 
   const [playing, setPlaying] = useState(false);
+  /** 재생 위치. 음원 **원본 기준**이다 (구간 아이템도 마찬가지). */
   const [cur, setCur] = useState(0);
-  const [dur, setDur] = useState(item.durationSec ?? 0);
+  /** 음원 파일 전체 길이. 구간 아이템은 이보다 짧은 일부만 쓴다. */
+  const [mediaDur, setMediaDur] = useState(0);
   const [rate, setRate] = useState(1);
 
   /** 반복 중인 문장. null 이면 통째로 재생. */
@@ -89,6 +91,13 @@ export default function ItemCard({ item, folder, statusLabel }: Props) {
     if (mediaRef.current) mediaRef.current.playbackRate = rate;
   }, [rate, url]);
 
+  /* 문항별로 나눈 아이템은 원본 음원의 한 구간만 쓴다 (0006_item_clips.sql).
+   * 오디오를 자르지 않았으므로, 재생기가 구간 밖으로 나가지 않게 막는다. */
+  const clipStart = item.clipStartSec ?? 0;
+  const clipEnd = item.clipEndSec ?? (mediaDur || null);
+  /** 화면에 보여줄 길이. 구간이면 구간 길이, 아니면 파일 전체 길이. */
+  const len = clipEnd !== null ? Math.max(0, clipEnd - clipStart) : (item.durationSec ?? 0);
+
   const seg = segments && repeat !== null ? segments[repeat] : undefined;
 
   const toggle = () => {
@@ -118,21 +127,29 @@ export default function ItemCard({ item, folder, statusLabel }: Props) {
     // 반복 중이면 문장 끝에서 처음으로 되돌린다.
     if (seg && el.currentTime >= seg.endSec) {
       el.currentTime = seg.startSec;
+    } else if (clipEnd !== null && el.currentTime >= clipEnd) {
+      // 구간 아이템은 다음 문항으로 넘어가면 안 된다. 파일은 이어지지만
+      // 이 아이템은 여기서 끝이다.
+      el.pause();
+      el.currentTime = clipStart;
+      setCur(clipStart);
+      return;
     }
     setCur(el.currentTime);
   };
 
   const seekTo = (clientX: number, track: HTMLElement) => {
     const el = mediaRef.current;
-    if (!el || !dur) return;
+    if (!el || len <= 0) return;
     const r = track.getBoundingClientRect();
     const ratio = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
-    el.currentTime = ratio * dur;
+    el.currentTime = clipStart + ratio * len;
     setCur(el.currentTime);
     setRepeat(null); // 손으로 옮겼으면 문장 반복은 푼다
   };
 
-  const pct = (t: number) => (dur > 0 ? (t / dur) * 100 : 0);
+  /** 원본 기준 시각을 이 아이템의 막대 위 위치(%)로. 구간이면 구간 기준이다. */
+  const pct = (t: number) => (len > 0 ? ((t - clipStart) / len) * 100 : 0);
 
   return (
     <div className={'card' + (open ? ' open' : '')}>
@@ -153,7 +170,7 @@ export default function ItemCard({ item, folder, statusLabel }: Props) {
           <div className="card-title">{item.title}</div>
           <div className="card-sub">
             {folder && <span className="pill" style={{ color: folder.color }}>{folder.name}</span>}
-            <span>{fmt(item.durationSec ?? dur)}</span>
+            <span>{fmt(len)}</span>
             {statusLabel && <span className="pill">{statusLabel}</span>}
             {item.tags.slice(0, 3).map((t) => (
               <span key={t} className="tg">#{t}</span>
@@ -187,8 +204,13 @@ export default function ItemCard({ item, folder, statusLabel }: Props) {
               onTimeUpdate={onTime}
               onLoadedMetadata={(e) => {
                 const el = e.currentTarget;
-                if (Number.isFinite(el.duration)) setDur(el.duration);
+                if (Number.isFinite(el.duration)) setMediaDur(el.duration);
                 el.playbackRate = rate;
+                // 구간 아이템은 파일 처음이 아니라 자기 구간에서 시작한다.
+                if (clipStart > 0 && el.currentTime < clipStart) {
+                  el.currentTime = clipStart;
+                  setCur(clipStart);
+                }
                 if (autoplay) {
                   setAutoplay(false);
                   // 사용자가 방금 누른 흐름이라 브라우저가 막지 않는다. 그래도
@@ -198,7 +220,7 @@ export default function ItemCard({ item, folder, statusLabel }: Props) {
               }}
             />
             <div className="scrub">
-              <span className="time">{fmt(cur)}</span>
+              <span className="time">{fmt(Math.max(0, cur - clipStart))}</span>
               <div
                 className="track"
                 onClick={(e) => seekTo(e.clientX, e.currentTarget)}
@@ -213,18 +235,18 @@ export default function ItemCard({ item, folder, statusLabel }: Props) {
                   document.addEventListener('mouseup', up);
                 }}
               >
-                {seg && dur > 0 && (
+                {seg && len > 0 && (
                   <div
                     className="ab"
                     style={{ left: pct(seg.startSec) + '%', width: pct(seg.endSec - seg.startSec) + '%' }}
                   />
                 )}
                 <div className="fill" style={{ width: pct(cur) + '%' }} />
-                {seg && dur > 0 && <div className="marker" style={{ left: pct(seg.startSec) + '%' }} />}
-                {seg && dur > 0 && <div className="marker" style={{ left: pct(seg.endSec) + '%' }} />}
+                {seg && len > 0 && <div className="marker" style={{ left: pct(seg.startSec) + '%' }} />}
+                {seg && len > 0 && <div className="marker" style={{ left: pct(seg.endSec) + '%' }} />}
                 <div className="knob" style={{ left: pct(cur) + '%' }} />
               </div>
-              <span className="time" style={{ textAlign: 'right' }}>{fmt(dur)}</span>
+              <span className="time" style={{ textAlign: 'right' }}>{fmt(len)}</span>
             </div>
 
             <div className="player-tools">

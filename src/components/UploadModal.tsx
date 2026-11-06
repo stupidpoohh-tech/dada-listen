@@ -6,13 +6,16 @@
  * 흐름: 아이템 생성 → R2 업로드 → 전사 요청 → 결과 폴링 → 세그먼트 저장.
  * 모달을 닫아도 목록 화면이 이어서 폴링하므로 중간에 닫아도 된다. */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Ic } from './icons';
 import TrimPanel from './TrimPanel';
-import { ACCEPT_MEDIA, isAudioFile, readDuration } from '../lib/media';
+import { ACCEPT_MEDIA, isAudioFile, readDuration, resolveMime } from '../lib/media';
+import { splitIntoQuestions } from '../lib/split';
+import type { QuestionBlock } from '../lib/split';
 import {
   collectTranscription,
   createItem,
+  createQuestionItems,
   deleteItem,
   listSegments,
   requestTranscription,
@@ -27,7 +30,7 @@ type Phase =
   | { kind: 'reading' }
   | { kind: 'uploading'; fraction: number }
   | { kind: 'transcribing' }
-  | { kind: 'done'; segments: Segment[] }
+  | { kind: 'done'; segments: Segment[]; itemId: string; mediaKey: string }
   | { kind: 'failed'; message: string };
 
 const fmtDur = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
@@ -51,6 +54,14 @@ export default function UploadModal({ folders, onClose, onChanged, toast }: Prop
   const [durationSec, setDurationSec] = useState(0);
   const [drag, setDrag] = useState(false);
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
+  /**
+   * 회차 하나를 문항별로 나눌지. 모의고사 듣기는 보통 음원 16덩어리에
+   * 문항 17개다 (16~17번이 한 지문). 긴 파일이면 기본으로 켠다.
+   */
+  const [splitOn, setSplitOn] = useState(false);
+  const [splitCount, setSplitCount] = useState(16);
+  const [mergeLastTwo, setMergeLastTwo] = useState(true);
+  const [splitting, setSplitting] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // 언마운트 뒤 setState 를 막는다. 전사 폴링이 모달보다 오래 살 수 있다.
@@ -68,6 +79,8 @@ export default function UploadModal({ folders, onClose, onChanged, toast }: Prop
     if (!title) setTitle(f.name.replace(/\.[^.]+$/, ''));
     const d = await readDuration(f);
     if (!alive.current) return;
+    // 10분이 넘으면 회차 통째일 가능성이 높다. 기본으로 나누기를 켜 둔다.
+    setSplitOn(d >= 600);
     setDurationSec(d);
     setPhase({ kind: 'idle' });
     toast(isAudioFile(f) ? '음성을 불러왔어요' : '영상을 불러왔어요 (오디오만 재생됩니다)');
@@ -113,7 +126,7 @@ export default function UploadModal({ folders, onClose, onChanged, toast }: Prop
           if (segments.length === 0) {
             setPhase({ kind: 'failed', message: '전사 결과가 비어 있어요. 음성이 들어 있는지 확인해 주세요.' });
           } else {
-            setPhase({ kind: 'done', segments });
+            setPhase({ kind: 'done', segments, itemId, mediaKey });
             toast('스크립트가 만들어졌어요');
           }
           return;
@@ -132,6 +145,46 @@ export default function UploadModal({ folders, onClose, onChanged, toast }: Prop
         await deleteItem(itemId).catch(() => {});
         onChanged();
       }
+    }
+  };
+
+  /** 전사 결과에서 문항 경계를 찾는다. 순수 함수라 숫자를 바꾸면 바로 다시 계산된다. */
+  const blocks = useMemo(
+    () =>
+      phase.kind === 'done' && splitOn
+        ? splitIntoQuestions(phase.segments, { expected: splitCount, mergeLastTwo })
+        : [],
+    [phase, splitOn, splitCount, mergeLastTwo],
+  );
+
+  /**
+   * 찾은 구간대로 문항 아이템을 만든다.
+   *
+   * 원본 아이템은 지운다. 음원 파일은 남는다 — 새로 만든 문항들이 같은
+   * media_key 를 가리키고 있어서 deleteItem 이 파일에 손대지 않는다.
+   */
+  const applySplit = async () => {
+    if (phase.kind !== 'done' || blocks.length === 0) return;
+    setSplitting(true);
+    try {
+      await createQuestionItems(blocks, phase.segments, {
+        title: title.trim(),
+        folderId: folderId || null,
+        tags,
+        mediaKey: phase.mediaKey,
+        mime: file ? resolveMime(file) : null,
+      });
+      await deleteItem(phase.itemId);
+      onChanged();
+      toast(`${blocks.length}개 문항으로 나눴어요`);
+      onClose();
+    } catch (e) {
+      console.error('[split]', e);
+      if (alive.current) {
+        setPhase({ kind: 'failed', message: e instanceof Error ? e.message : '나누지 못했어요' });
+      }
+    } finally {
+      if (alive.current) setSplitting(false);
     }
   };
 
@@ -267,7 +320,32 @@ export default function UploadModal({ folders, onClose, onChanged, toast }: Prop
             </>
           )}
 
-          {phase.kind === 'done' && <TranscriptPreview segments={phase.segments} />}
+          {phase.kind === 'done' && (
+            splitOn
+              ? (
+                <SplitReview
+                  blocks={blocks}
+                  segments={phase.segments}
+                  count={splitCount}
+                  mergeLastTwo={mergeLastTwo}
+                  onCount={setSplitCount}
+                  onMergeLastTwo={setMergeLastTwo}
+                  onOff={() => setSplitOn(false)}
+                />
+              )
+              : (
+                <>
+                  <TranscriptPreview segments={phase.segments} />
+                  <button
+                    className="btn ghost sm"
+                    style={{ marginTop: 10 }}
+                    onClick={() => setSplitOn(true)}
+                  >
+                    문항별로 나누기
+                  </button>
+                </>
+              )
+          )}
 
           {phase.kind === 'failed' && (
             <div
@@ -295,6 +373,15 @@ export default function UploadModal({ folders, onClose, onChanged, toast }: Prop
           <button className="btn ghost" onClick={onClose} disabled={phase.kind === 'uploading'}>
             {phase.kind === 'done' ? '닫기' : '취소'}
           </button>
+          {phase.kind === 'done' && splitOn && (
+            <button
+              className="btn primary"
+              disabled={blocks.length === 0 || splitting}
+              onClick={() => void applySplit()}
+            >
+              <Ic.check /> {splitting ? '나누는 중…' : `${blocks.length}개 문항으로 추가`}
+            </button>
+          )}
           {phase.kind !== 'done' && (
             <button className="btn primary" disabled={!canSave} onClick={() => void save()}>
               <Ic.check /> {busy ? '진행 중…' : '추가하기'}
@@ -328,6 +415,98 @@ function ProgressLine({ phase }: { phase: Phase }) {
 }
 
 /** 전사 결과 미리보기. 문장마다 시간이 붙는다 (D-003). */
+/**
+ * 찾아낸 문항 경계를 보여주고 고치게 한다.
+ *
+ * 경계 검출은 완벽할 수 없다. 틀렸을 때 사용자가 **보고 고칠 수 있는 것**이
+ * 자동 검출의 정확도보다 중요하다. 그래서 숫자를 바꾸면 즉시 다시 나뉜다.
+ */
+function SplitReview({
+  blocks, segments, count, mergeLastTwo, onCount, onMergeLastTwo, onOff,
+}: {
+  blocks: QuestionBlock[];
+  segments: Segment[];
+  count: number;
+  mergeLastTwo: boolean;
+  onCount: (n: number) => void;
+  onMergeLastTwo: (v: boolean) => void;
+  onOff: () => void;
+}) {
+  const short = blocks.filter((b) => b.endSec - b.startSec < 15).length;
+  const guessed = blocks.length > 0 && !blocks[0]!.fromMarker;
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+        <span style={{ fontSize: 12.5, color: 'var(--ink-3)' }}>음원 덩어리</span>
+        <input
+          className="input"
+          type="number"
+          min={1}
+          max={40}
+          value={count}
+          onChange={(e) => onCount(Math.max(1, Math.min(40, Number(e.target.value) || 1)))}
+          style={{ width: 72, padding: '6px 8px', textAlign: 'center' }}
+        />
+        <label style={{ fontSize: 12.5, color: 'var(--ink-2)', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <input type="checkbox" checked={mergeLastTwo} onChange={(e) => onMergeLastTwo(e.target.checked)} />
+          마지막은 두 문제 (16~17번)
+        </label>
+        <div style={{ flex: 1 }} />
+        <button className="btn ghost sm" onClick={onOff}>나누지 않기</button>
+      </div>
+
+      <div style={{ fontSize: 12.5, color: 'var(--ink-3)', marginBottom: 10, lineHeight: 1.6 }}>
+        {guessed
+          ? '한국어 안내를 못 찾아서 문항 사이 공백으로 나눴어요. 아래를 확인해 주세요.'
+          : '한국어 안내에서 문항 번호를 읽었어요.'}
+        {short > 0 && (
+          <span style={{ color: '#c8392b' }}>
+            {' '}너무 짧은 구간이 {short}개 있어요 — 개수를 줄여 보세요.
+          </span>
+        )}
+      </div>
+
+      <div
+        style={{
+          border: '1px solid var(--line)', borderRadius: 'var(--r)',
+          background: 'var(--bg-soft)', maxHeight: 300, overflowY: 'auto',
+        }}
+      >
+        {blocks.map((b) => (
+          <div
+            key={b.no + b.startSec}
+            style={{
+              display: 'flex', gap: 10, alignItems: 'baseline',
+              padding: '8px 14px', borderBottom: '1px solid var(--line-2)',
+            }}
+          >
+            <span style={{ fontWeight: 700, fontSize: 13, minWidth: 48, flex: 'none' }}>
+              {b.no}번
+            </span>
+            <span
+              style={{
+                fontSize: 11.5, color: 'var(--ink-4)', minWidth: 96, flex: 'none',
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {fmtDur(b.startSec)}–{fmtDur(b.endSec)} · {Math.round(b.endSec - b.startSec)}초
+            </span>
+            <span
+              style={{
+                fontSize: 12.5, color: 'var(--ink-3)', overflow: 'hidden',
+                textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}
+            >
+              {segments[b.segFrom]?.text ?? ''}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function TranscriptPreview({ segments }: { segments: Segment[] }) {
   const total = segments.at(-1)?.endSec ?? 0;
   return (

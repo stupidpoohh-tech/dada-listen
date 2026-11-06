@@ -31,6 +31,15 @@ export type Item = {
   mediaKey: string | null;
   mime: string | null;
   durationSec: number | null;
+  /**
+   * 음원 안에서 이 문항이 차지하는 구간. null 이면 파일 전체다.
+   * 20분짜리 회차를 문항별로 나눌 때, 오디오를 자르지 않고 구간만 가리킨다
+   * (0006_item_clips.sql). 여러 아이템이 같은 mediaKey 를 공유한다.
+   */
+  clipStartSec: number | null;
+  clipEndSec: number | null;
+  /** 표시용 문항 번호. "12" 또는 "16~17". */
+  questionNo: string | null;
   status: ItemStatus;
   statusError: string | null;
   createdAt: string;
@@ -64,4 +73,11 @@ export type NewItem = {
   title: string;
   folderId?: string | null;
   tags?: string[];
+  /** 문항별로 나눠 만들 때. 셋은 함께 들어가거나 함께 빠진다. */
+  mediaKey?: string | null;
+  mime?: string | null;
+  durationSec?: number | null;
+  clipStartSec?: number | null;
+  clipEndSec?: number | null;
+  questionNo?: string | null;
 };

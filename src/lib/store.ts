@@ -34,6 +34,7 @@ import type {
   Word,
 } from './types';
 import { resolveMime } from './media';
+import type { QuestionBlock } from './split';
 
 /* ------------------------------------------------------------------ *
  * 인증 — auth.users 의 모든 행은 강사다. 학생은 계정을 갖지 않는다 (D-005).
@@ -195,6 +196,9 @@ const toItem = (r: Row): Item => ({
   mediaKey: (r.media_key as string | null) ?? null,
   mime: (r.mime as string | null) ?? null,
   durationSec: (r.duration_sec as number | null) ?? null,
+  clipStartSec: (r.clip_start_sec as number | null) ?? null,
+  clipEndSec: (r.clip_end_sec as number | null) ?? null,
+  questionNo: (r.question_no as string | null) ?? null,
   status: r.status as ItemStatus,
   statusError: (r.status_error as string | null) ?? null,
   createdAt: r.created_at as string,
@@ -280,17 +284,40 @@ export async function getItem(id: string): Promise<Item | null> {
 }
 
 export async function createItem(input: NewItem): Promise<Item> {
-  const { data, error } = await db
-    .from('items')
-    .insert({
-      title: input.title,
-      folder_id: input.folderId ?? null,
-      tags: input.tags ?? [],
-    })
-    .select()
-    .single();
+  // owner_id 는 싣지 않는다. DB 가 default auth.user_id() 로 채운다.
+  const row: Row = {
+    title: input.title,
+    folder_id: input.folderId ?? null,
+    tags: input.tags ?? [],
+  };
+  // 문항별로 나눠 만들 때만 들어가는 값들. undefined 면 컬럼을 건드리지 않는다.
+  if (input.mediaKey !== undefined) row.media_key = input.mediaKey;
+  if (input.mime !== undefined) row.mime = input.mime;
+  if (input.durationSec !== undefined) row.duration_sec = input.durationSec;
+  if (input.clipStartSec !== undefined) row.clip_start_sec = input.clipStartSec;
+  if (input.clipEndSec !== undefined) row.clip_end_sec = input.clipEndSec;
+  if (input.questionNo !== undefined) row.question_no = input.questionNo;
+
+  const { data, error } = await db.from('items').insert(row).select().single();
   if (error) throw error;
   return toItem(data);
+}
+
+/**
+ * 같은 음원을 쓰는 다른 아이템이 있는지.
+ *
+ * 문항별로 나누면 여러 아이템이 R2 오브젝트 하나를 공유한다. 하나를 지울 때
+ * 파일까지 지우면 나머지가 전부 재생 불가가 된다.
+ */
+async function mediaUsedByOthers(mediaKey: string, exceptItemId: string): Promise<boolean> {
+  const { data, error } = await db
+    .from('items')
+    .select('id')
+    .eq('media_key', mediaKey)
+    .neq('id', exceptItemId)
+    .limit(1);
+  if (error) throw error;
+  return (data ?? []).length > 0;
 }
 
 export async function updateItem(
@@ -317,9 +344,16 @@ export async function deleteItem(id: string): Promise<void> {
   const item = await getItem(id);
   const { error } = await db.from('items').delete().eq('id', id);
   if (error) throw error;
+
   // 행이 사라진 뒤에 파일을 지운다. 반대로 하면 삭제가 실패했을 때 재생 불가인
   // 고아 행이 남는다.
-  if (item?.mediaKey) await deleteMedia(item.mediaKey).catch(() => {});
+  //
+  // **아직 그 음원을 쓰는 아이템이 있으면 파일은 두고 간다.** 한 회차를 문항별로
+  // 나누면 17개가 같은 오브젝트를 가리키므로, 하나 지웠다고 지워버리면 나머지가
+  // 전부 깨진다 (0006_item_clips.sql).
+  if (!item?.mediaKey) return;
+  const shared = await mediaUsedByOthers(item.mediaKey, id).catch(() => true);
+  if (!shared) await deleteMedia(item.mediaKey).catch(() => {});
 }
 
 /* ------------------------------------------------------------------ *
@@ -360,6 +394,55 @@ export async function replaceSegments(
     .select();
   if (error) throw error;
   return (data ?? []).map(toSegment).sort((a, b) => a.idx - b.idx);
+}
+
+/**
+ * 전사된 회차 하나를 문항별 아이템으로 만든다.
+ *
+ * 오디오는 자르지 않는다. 17개가 전부 같은 mediaKey 를 가리키고, 각자
+ * clipStartSec~clipEndSec 만 다르다 (0006_item_clips.sql).
+ *
+ * **세그먼트의 타임스탬프는 원본 기준 그대로 둔다.** 0 부터 다시 세면 재생할
+ * 때 다시 더해야 하고, 한 번이라도 어긋나면 문장 클릭 반복이 엉뚱한 데를
+ * 짚는다. 재생기가 구간만 제한하면 될 일이다.
+ *
+ * 하나라도 실패하면 만들다 만 아이템을 지우고 던진다. 반쯤 만들어진 회차가
+ * 목록에 남는 것이 제일 나쁘다.
+ */
+export async function createQuestionItems(
+  blocks: readonly QuestionBlock[],
+  segments: readonly Segment[],
+  base: { title: string; folderId: string | null; tags: string[]; mediaKey: string; mime: string | null },
+): Promise<Item[]> {
+  const made: Item[] = [];
+  try {
+    for (const b of blocks) {
+      const item = await createItem({
+        title: `${base.title} ${b.no}번`,
+        folderId: base.folderId,
+        tags: base.tags,
+        mediaKey: base.mediaKey,
+        mime: base.mime,
+        durationSec: Math.max(0, b.endSec - b.startSec),
+        clipStartSec: b.startSec,
+        clipEndSec: b.endSec,
+        questionNo: b.no,
+      });
+      made.push(item);
+
+      const mine = segments
+        .slice(b.segFrom, b.segTo + 1)
+        .map((seg, i) => ({ ...seg, idx: i }));
+      await replaceSegments(item.id, mine);
+      await updateItem(item.id, { status: 'ready' });
+    }
+    return made;
+  } catch (e) {
+    // 되돌린다. deleteItem 은 같은 음원을 쓰는 아이템이 남아 있으면 파일을
+    // 건드리지 않으므로, 원본 오브젝트는 안전하다.
+    for (const item of made) await deleteItem(item.id).catch(() => {});
+    throw e;
+  }
 }
 
 /* ------------------------------------------------------------------ *
