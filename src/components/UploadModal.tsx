@@ -13,12 +13,15 @@ import { ACCEPT_MEDIA, isAudioFile, readDuration, resolveMime } from '../lib/med
 import { SCRIPT_ACCEPT, readTranscriptFile } from '../lib/sourceText';
 import { alignTranscript, parseTranscript, transcriptForQuestion } from '../lib/transcript';
 import { splitIntoQuestions } from '../lib/split';
+import { analyzeRemoteAudio } from '../lib/audioSilence';
+import type { ClipRange } from '../lib/audioSilence';
 import type { QuestionBlock } from '../lib/split';
 import {
   collectTranscription,
   createItem,
   createQuestionItems,
   deleteItem,
+  getMediaUrl,
   listSegments,
   replaceSegments,
   requestTranscription,
@@ -65,6 +68,9 @@ export default function UploadModal({ folders, onClose, onChanged, toast }: Prop
   const [splitCount, setSplitCount] = useState(16);
   const [mergeLastTwo, setMergeLastTwo] = useState(true);
   const [splitting, setSplitting] = useState(false);
+  const [audioRanges, setAudioRanges] = useState<ClipRange[] | null>(null);
+  const [audioDetecting, setAudioDetecting] = useState(false);
+  const [audioDetectError, setAudioDetectError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   const scriptRef = useRef<HTMLInputElement>(null);
   const [scriptText, setScriptText] = useState('');
@@ -106,6 +112,8 @@ export default function UploadModal({ folders, onClose, onChanged, toast }: Prop
     if (!f) return;
     setFile(f);
     setOriginal(f);
+    setAudioRanges(null);
+    setAudioDetectError('');
     setPhase({ kind: 'reading' });
     if (!title) setTitle(f.name.replace(/\.[^.]+$/, ''));
     const d = await readDuration(f);
@@ -179,18 +187,57 @@ export default function UploadModal({ folders, onClose, onChanged, toast }: Prop
     }
   };
 
-  /** 전사 결과에서 문항 경계를 찾는다. 순수 함수라 숫자를 바꾸면 바로 다시 계산된다. */
-  const blocks = useMemo(
-    () =>
-      phase.kind === 'done' && splitOn
-        ? splitIntoQuestions(phase.segments, {
-            expected: splitCount,
-            mergeLastTwo: mergeLastTwo && splitCount === 16,
-            separateLastPair: mergeLastTwo && splitCount === 16,
-          })
-        : [],
-    [phase, splitOn, splitCount, mergeLastTwo],
+  /** 전사 기준 경계는 빠진 발화 때문에 잘릴 수 있다. */
+  const asrBlocks = useMemo(
+    () => phase.kind === 'done' && splitOn
+      ? splitIntoQuestions(phase.segments, {
+          expected:splitCount,
+          mergeLastTwo:mergeLastTwo && splitCount === 16,
+          separateLastPair:mergeLastTwo && splitCount === 16,
+        })
+      : [],
+    [phase,splitOn,splitCount,mergeLastTwo],
   );
+
+  /** 원본 무음 기준 결과가 있으면 타임스탬프와 세그먼트 배정도 함께 교정한다. */
+  const blocks = useMemo(() => {
+    if (!audioRanges || phase.kind !== 'done' || splitCount !== 16 ||
+        !mergeLastTwo || asrBlocks.length !== 17) return asrBlocks;
+    return asrBlocks.map(b => {
+      const range = audioRanges.find(r => r.no === Number(b.no));
+      if (!range) return b;
+      const belonging: number[] = [];
+      phase.segments.forEach((seg, idx) => {
+        const center=(seg.startSec + seg.endSec)/2;
+        if (center >= range.startSec && center <= range.endSec) belonging.push(idx);
+      });
+      return {
+        ...b, startSec:range.startSec, endSec:range.endSec,
+        segFrom:belonging[0] ?? b.segFrom,
+        segTo:belonging.at(-1) ?? b.segTo,
+      };
+    });
+  }, [asrBlocks,audioRanges,phase,splitCount,mergeLastTwo]);
+
+  const analyzeBoundaries = async () => {
+    if (phase.kind !== 'done' || audioDetecting) return;
+    setAudioDetectError('');
+    setAudioDetecting(true);
+    try {
+      const url = await getMediaUrl(phase.mediaKey);
+      if (!url) throw new Error('원본 MP3의 재생 링크를 가져오지 못했습니다');
+      const analyzed = await analyzeRemoteAudio(url);
+      if (!alive.current) return;
+      setAudioRanges(analyzed);
+      toast('원본 음원의 무음 구간으로 17문항의 경계를 다시 계산했습니다');
+    } catch (e) {
+      if (alive.current) setAudioDetectError(
+        e instanceof Error ? e.message : '원본 음원을 분석하지 못했습니다',
+      );
+    } finally {
+      if (alive.current) setAudioDetecting(false);
+    }
+  };
 
   const corrections = useMemo(() => {
     if (phase.kind !== 'done' || !scriptText.trim()) return null;
@@ -219,7 +266,9 @@ export default function UploadModal({ folders, onClose, onChanged, toast }: Prop
    * media_key 를 가리키고 있어서 deleteItem 이 파일에 손대지 않는다.
    */
   const applySplit = async () => {
-    if (phase.kind !== 'done' || blocks.length === 0) return;
+    if (phase.kind !== 'done' || blocks.length === 0 || audioDetecting) return;
+    if (splitCount === 16 && mergeLastTwo && !audioRanges &&
+        !window.confirm('원본 음원 무음 분석을 하지 않았습니다. 자동 전사 경계는 음성의 앞뒤를 잘라낼 수 있습니다. 그대로 등록할까요?')) return;
     setSplitting(true);
     try {
       await createQuestionItems(blocks, phase.segments, {
@@ -446,6 +495,23 @@ export default function UploadModal({ folders, onClose, onChanged, toast }: Prop
           {phase.kind === 'done' && (
             splitOn
               ? (
+                <>
+                {splitCount === 16 && mergeLastTwo && (
+                  <div style={{border:'1px solid var(--line)',borderRadius:10,
+                    padding:'10px 12px',marginBottom:12,fontSize:12.5,lineHeight:1.65}}>
+                    <button className="btn primary sm" disabled={audioDetecting || splitting}
+                      onClick={()=>void analyzeBoundaries()}>
+                      {audioDetecting ? '원본 MP3 분석 중…' : '원본 음원으로 문항 경계 보정'}
+                    </button>
+                    <div style={{marginTop:6,color:audioRanges?'var(--ink-2)':'#c8392b'}}>
+                      {audioRanges ? '무음 기준으로 17개 구간을 계산했습니다.' :
+                        '현재는 AI 전사 시점 기준입니다. 구간이 잘릴 수 있으므로 원본 음원 분석을 권장합니다.'}
+                    </div>
+                    {audioDetectError && <div role="alert" style={{marginTop:6,color:'#c8392b'}}>
+                      {audioDetectError} · 등록 후 관리자 목록의 구간 보정에서도 수정할 수 있습니다.
+                    </div>}
+                  </div>
+                )}
                 <SplitReview
                   blocks={blocks}
                   segments={phase.segments}
@@ -455,6 +521,7 @@ export default function UploadModal({ folders, onClose, onChanged, toast }: Prop
                   onMergeLastTwo={setMergeLastTwo}
                   onOff={() => setSplitOn(false)}
                 />
+                </>
               )
               : (
                 <>
@@ -499,7 +566,7 @@ export default function UploadModal({ folders, onClose, onChanged, toast }: Prop
           {phase.kind === 'done' && splitOn && (
             <button
               className="btn primary"
-              disabled={blocks.length === 0 || splitting}
+              disabled={blocks.length === 0 || splitting || audioDetecting}
               onClick={() => void applySplit()}
             >
               <Ic.check /> {splitting ? '나누는 중…' : `${blocks.length}개 문항으로 추가`}
