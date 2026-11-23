@@ -49,6 +49,7 @@ export default function ClipRepairModal({ items, onClose, onChanged, toast }: Pr
     setRanges(null);
     try {
       const url = await getMediaUrl(group.key);
+      if (!url) throw new Error('원본 음원 링크를 가져오지 못했습니다');
       const detected = await analyzeRemoteAudio(url);
       setRanges(detected);
       setSource('원본 음원의 무음 분석');
@@ -166,7 +167,7 @@ export default function ClipRepairModal({ items, onClose, onChanged, toast }: Pr
                         <th style={{padding:8,textAlign:'left'}}>새 시작(초)</th>
                         <th style={{padding:8,textAlign:'left'}}>새 종료(초)</th></tr></thead>
                       <tbody>{ranges.map(r=>{
-                        const item=group.items.find(it=>questionNo(it)===r.no);
+                        const item=group?.items.find(it=>questionNo(it)===r.no);
                         return <tr key={r.no} style={{borderTop:'1px solid var(--line-2)'}}>
                           <td style={{padding:6}}>{r.no}번</td>
                           <td style={{padding:6,color:'var(--ink-3)',whiteSpace:'nowrap'}}>
