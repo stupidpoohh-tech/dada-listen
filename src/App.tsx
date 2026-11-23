@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Login from './components/Login';
 import { Ic } from './components/icons';
 import UploadModal from './components/UploadModal';
+import ClipRepairModal from './components/ClipRepairModal';
 import ItemCard from './components/ItemCard';
 import {
   collectTranscription,
@@ -47,6 +48,7 @@ export default function App() {
   const refreshSeq = useRef(0);
 
   const [upload, setUpload] = useState(false);
+  const [clipRepair, setClipRepair] = useState(false);
   const [deletingAll, setDeletingAll] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deletedProgress, setDeletedProgress] = useState(0);
@@ -421,18 +423,25 @@ export default function App() {
                 <span className="c">{visible.length}개</span>
                 <div style={{ flex: 1 }} />
                 {isAdmin && (
-                  <button type="button" className="btn danger sm"
-                    disabled={deletingAll || deletingId !== null}
-                    aria-label="내 계정의 모든 음성과 문항 삭제"
-                    onClick={() => void removeAll()}>
-                    <Ic.trash s={15} />
-                    {deletingAll ? `삭제 중 ${deletedProgress}개` : '전체 삭제'}
-                  </button>
+                  <div style={{display:'flex',gap:7,flexWrap:'wrap',justifyContent:'flex-end'}}>
+                    <button type="button" className="btn sm"
+                      disabled={deletingAll || deletingId !== null || upload}
+                      onClick={() => setClipRepair(true)}>
+                      <Ic.edit s={15}/> 구간 보정
+                    </button>
+                    <button type="button" className="btn danger sm"
+                      disabled={deletingAll || deletingId !== null}
+                      aria-label="내 계정의 모든 음성과 문항 삭제"
+                      onClick={() => void removeAll()}>
+                      <Ic.trash s={15} />
+                      {deletingAll ? `삭제 중 ${deletedProgress}개` : '전체 삭제'}
+                    </button>
+                  </div>
                 )}
               </div>
               {visible.map((it) => (
                 <ItemCard
-                  key={mode + ':' + it.id}
+                  key={mode + ':' + it.id + ':' + (it.clipStartSec ?? 'full') + ':' + (it.clipEndSec ?? 'full')}
                   item={it}
                   folder={folderOf(it.folderId)}
                   statusLabel={STATUS_LABEL[it.status]}
@@ -447,6 +456,12 @@ export default function App() {
         </div>
       </main>
 
+      {clipRepair && isAdmin && !deletingAll && (
+        <ClipRepairModal items={items}
+          onClose={() => setClipRepair(false)}
+          onChanged={() => void refresh()}
+          toast={toast} />
+      )}
       {upload && !deletingAll && (
         <UploadModal
           folders={folders}

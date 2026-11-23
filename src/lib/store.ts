@@ -344,6 +344,35 @@ export async function updateItem(
   if (error) throw error;
 }
 
+/** 기존 17개 문항의 재생 범위를 MP3 재업로드 없이 변경한다. */
+export async function updateItemClip(
+  id: string,
+  clipStartSec: number | null,
+  clipEndSec: number | null,
+  restoreDurationSec?: number | null,
+): Promise<void> {
+  if ((clipStartSec === null) !== (clipEndSec === null)) {
+    throw new Error('시작/종료 시간은 함께 입력해야 합니다');
+  }
+  if (clipStartSec !== null &&
+      (!Number.isFinite(clipStartSec) || !Number.isFinite(clipEndSec) ||
+       clipStartSec < 0 || clipEndSec! <= clipStartSec)) {
+    throw new Error('올바르지 않은 재생 구간입니다');
+  }
+  const durationSec = restoreDurationSec !== undefined
+    ? restoreDurationSec
+    : clipStartSec !== null ? clipEndSec! - clipStartSec : null;
+  const { data, error } = await db.from('items')
+    .update({
+      clip_start_sec: clipStartSec,
+      clip_end_sec: clipEndSec,
+      duration_sec: durationSec,
+    })
+    .eq('id', id).select('id');
+  if (error) throw error;
+  if (!data?.length) throw new Error('저장할 문항이 없거나 편집 권한이 없습니다');
+}
+
 /** 문항 삭제: DB 연관 자료는 FK cascade, 공유 음원은 마지막 문항에서만 지운다. */
 export async function deleteItem(id: string): Promise<void> {
   const item = await getItem(id);
