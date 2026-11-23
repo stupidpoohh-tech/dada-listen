@@ -33,7 +33,10 @@ describe('실제 음원 기반 구간 보정', () => {
     const peaks=Array.from({length:80},(_,i)=>i>=10&&i<33?0:.2);
     expect(detectLongSilences(peaks,.1)).toHaveLength(0);
     for(let i=10;i<53;i++)peaks[i]=0;
-    expect(detectLongSilences(peaks,.1)).toEqual([{startSec:1,endSec:5.3}]);
+    const found=detectLongSilences(peaks,.1);
+    expect(found).toHaveLength(1);
+    expect(found[0]!.startSec).toBeCloseTo(1,4);
+    expect(found[0]!.endSec).toBeCloseTo(5.3,4);
   });
   it('구간표의 중복과 누락을 거부한다',()=>{
     const csv=['번호,시작,끝',...Array.from({length:17},(_,i)=>(i+1)+','+(i*80)+','+(i*80+60))].join('\n');
