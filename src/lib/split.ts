@@ -284,3 +284,46 @@ function block(
     fromMarker,
   };
 }
+
+/* ------------------------------------------------------------------ *
+ * 경계를 이미 알고 있을 때
+ * ------------------------------------------------------------------ */
+
+/** 번호와 구간만 아는 상태. 무음 분석 결과나 손으로 붙여넣은 표에서 온다. */
+export type KnownRange = { no: number; startSec: number; endSec: number };
+
+/**
+ * 정해진 구간을 그대로 문항 덩어리로 만든다.
+ *
+ * **자동 분할 결과에 기대지 않는다.** 경계를 아는 마당에 검출의 성패에 매달릴
+ * 이유가 없다. 세그먼트는 **시각으로** 배정한다 — 순번으로 맞추면 자동 분할이
+ * 어긋난 만큼 같이 어긋난다.
+ *
+ * 16번과 17번처럼 **두 문항이 같은 구간을 가리켜도 된다.** 오디오를 복사하지
+ * 않으므로 카드만 둘이고 음원은 하나다.
+ *
+ * 구간에 전사가 하나도 없으면 빈 범위(segFrom > segTo)로 둔다. 음원은
+ * 재생되고 스크립트만 비어 있는 카드가 된다 — 통째로 날리는 것보다 낫다.
+ */
+export function blocksFromRanges(
+  ranges: readonly KnownRange[],
+  segments: readonly Segment[],
+): QuestionBlock[] {
+  return ranges.map((range) => {
+    const inside: number[] = [];
+    segments.forEach((seg, idx) => {
+      // 발화의 한가운데가 구간 안에 있으면 그 구간 것으로 본다. 경계에 걸친
+      // 발화가 양쪽에 중복으로 들어가지 않는다.
+      const center = (seg.startSec + seg.endSec) / 2;
+      if (center >= range.startSec && center <= range.endSec) inside.push(idx);
+    });
+    return {
+      no: String(range.no),
+      startSec: range.startSec,
+      endSec: range.endSec,
+      segFrom: inside[0] ?? 0,
+      segTo: inside.at(-1) ?? -1,
+      fromMarker: false,
+    };
+  });
+}

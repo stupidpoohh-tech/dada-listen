@@ -12,10 +12,11 @@ import TrimPanel from './TrimPanel';
 import { ACCEPT_MEDIA, isAudioFile, readDuration, resolveMime } from '../lib/media';
 import { SCRIPT_ACCEPT, readTranscriptFile } from '../lib/sourceText';
 import { alignTranscript, parseTranscript, transcriptForQuestion } from '../lib/transcript';
-import { splitIntoQuestions } from '../lib/split';
-import { analyzeRemoteAudio } from '../lib/audioSilence';
-import type { ClipRange } from '../lib/audioSilence';
+import { blocksFromRanges, splitIntoQuestions } from '../lib/split';
 import type { QuestionBlock } from '../lib/split';
+import { analyzeRemoteAudio, parseClipCsv } from '../lib/audioSilence';
+import type { ClipRange } from '../lib/audioSilence';
+
 import {
   collectTranscription,
   createItem,
@@ -69,6 +70,9 @@ export default function UploadModal({ folders, onClose, onChanged, toast }: Prop
   const [mergeLastTwo, setMergeLastTwo] = useState(true);
   const [splitting, setSplitting] = useState(false);
   const [audioRanges, setAudioRanges] = useState<ClipRange[] | null>(null);
+  /** 경계를 이미 알고 있을 때 표로 붙여넣는 자리. 추측을 지운다. */
+  const [pasteText, setPasteText] = useState('');
+  const [pasteError, setPasteError] = useState('');
   const [audioDetecting, setAudioDetecting] = useState(false);
   const [audioDetectError, setAudioDetectError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
@@ -199,25 +203,32 @@ export default function UploadModal({ folders, onClose, onChanged, toast }: Prop
     [phase,splitOn,splitCount,mergeLastTwo],
   );
 
-  /** 원본 무음 기준 결과가 있으면 타임스탬프와 세그먼트 배정도 함께 교정한다. */
+  /**
+   * 구간이 정해져 있으면(무음 분석이든 손으로 붙여넣었든) **그것이 정답이다.**
+   *
+   * 예전에는 자동 분할이 17덩어리를 맞췄을 때만 보정했는데, 경계를 이미 아는
+   * 마당에 자동 분할의 성패에 매달릴 이유가 없다. 세그먼트는 시각으로 배정한다
+   * — 순번으로 맞추면 자동 분할이 어긋난 만큼 같이 어긋난다.
+   *
+   * 16번과 17번처럼 두 문항이 같은 구간을 가리켜도 된다. 오디오를 복사하지
+   * 않으므로 카드만 둘이고 음원은 하나다.
+   */
   const blocks = useMemo(() => {
-    if (!audioRanges || phase.kind !== 'done' || splitCount !== 16 ||
-        !mergeLastTwo || asrBlocks.length !== 17) return asrBlocks;
-    return asrBlocks.map(b => {
-      const range = audioRanges.find(r => r.no === Number(b.no));
-      if (!range) return b;
-      const belonging: number[] = [];
-      phase.segments.forEach((seg, idx) => {
-        const center=(seg.startSec + seg.endSec)/2;
-        if (center >= range.startSec && center <= range.endSec) belonging.push(idx);
-      });
-      return {
-        ...b, startSec:range.startSec, endSec:range.endSec,
-        segFrom:belonging[0] ?? b.segFrom,
-        segTo:belonging.at(-1) ?? b.segTo,
-      };
-    });
-  }, [asrBlocks,audioRanges,phase,splitCount,mergeLastTwo]);
+    if (phase.kind !== 'done' || !audioRanges || audioRanges.length === 0) return asrBlocks;
+    return blocksFromRanges(audioRanges, phase.segments);
+  }, [asrBlocks, audioRanges, phase]);
+
+  /** 붙여넣은 표를 구간으로 바꾼다. 형식은 구간 보정 화면과 같다. */
+  const applyPastedRanges = () => {
+    setPasteError('');
+    try {
+      setAudioRanges(parseClipCsv(pasteText));
+      toast('붙여넣은 구간으로 문항 경계를 정했습니다');
+    } catch (e) {
+      setAudioRanges(null);
+      setPasteError(e instanceof Error ? e.message : '구간을 읽지 못했습니다');
+    }
+  };
 
   const analyzeBoundaries = async () => {
     if (phase.kind !== 'done' || audioDetecting) return;
@@ -496,22 +507,54 @@ export default function UploadModal({ folders, onClose, onChanged, toast }: Prop
             splitOn
               ? (
                 <>
-                {splitCount === 16 && mergeLastTwo && (
-                  <div style={{border:'1px solid var(--line)',borderRadius:10,
-                    padding:'10px 12px',marginBottom:12,fontSize:12.5,lineHeight:1.65}}>
-                    <button className="btn primary sm" disabled={audioDetecting || splitting}
-                      onClick={()=>void analyzeBoundaries()}>
-                      {audioDetecting ? '원본 MP3 분석 중…' : '원본 음원으로 문항 경계 보정'}
-                    </button>
-                    <div style={{marginTop:6,color:audioRanges?'var(--ink-2)':'#c8392b'}}>
-                      {audioRanges ? '무음 기준으로 17개 구간을 계산했습니다.' :
-                        '현재는 AI 전사 시점 기준입니다. 구간이 잘릴 수 있으므로 원본 음원 분석을 권장합니다.'}
-                    </div>
-                    {audioDetectError && <div role="alert" style={{marginTop:6,color:'#c8392b'}}>
-                      {audioDetectError} · 등록 후 관리자 목록의 구간 보정에서도 수정할 수 있습니다.
-                    </div>}
+                <div style={{border:'1px solid var(--line)',borderRadius:10,
+                  padding:'10px 12px',marginBottom:12,fontSize:12.5,lineHeight:1.65}}>
+                  {splitCount === 16 && mergeLastTwo && (
+                    <>
+                      <button className="btn primary sm" disabled={audioDetecting || splitting}
+                        onClick={()=>void analyzeBoundaries()}>
+                        {audioDetecting ? '원본 MP3 분석 중…' : '원본 음원으로 문항 경계 보정'}
+                      </button>
+                      {audioDetectError && <div role="alert" style={{marginTop:6,color:'#c8392b'}}>
+                        {audioDetectError} · 등록 후 관리자 목록의 구간 보정에서도 수정할 수 있습니다.
+                      </div>}
+                    </>
+                  )}
+
+                  <div style={{marginTop:8,color:audioRanges?'var(--ink-2)':'#c8392b'}}>
+                    {audioRanges
+                      ? `구간 ${audioRanges.length}개가 정해졌습니다. 아래 목록이 그대로 등록됩니다.`
+                      : '지금은 AI 전사 시점 기준입니다. 말끝이 잘릴 수 있으니, 아는 구간이 있으면 아래에 붙여넣으세요.'}
                   </div>
-                )}
+
+                  <details style={{marginTop:8}} open={!audioRanges}>
+                    <summary style={{cursor:'pointer',fontWeight:600}}>구간을 직접 붙여넣기</summary>
+                    <div style={{marginTop:6,color:'var(--ink-3)'}}>
+                      한 줄에 <b>번호 · 시작초 · 끝초</b>. 엑셀에서 복사해 그대로 붙여넣어도 됩니다.
+                      16번과 17번처럼 <b>같은 구간을 두 문항이 공유해도 됩니다</b>.
+                    </div>
+                    <textarea
+                      value={pasteText}
+                      onChange={(e)=>{ setPasteText(e.target.value); setPasteError(''); }}
+                      placeholder={'번호\t시작\t끝\n1\t0\t55.51\n2\t64.15\t121.01\n…\n16\t1160.67\t1324.82\n17\t1160.67\t1324.82'}
+                      spellCheck={false}
+                      style={{width:'100%',minHeight:110,marginTop:8,padding:'8px 10px',
+                        border:'1px solid var(--line)',borderRadius:8,fontFamily:'ui-monospace,monospace',
+                        fontSize:12,lineHeight:1.6,resize:'vertical',color:'var(--ink)'}}
+                    />
+                    <div style={{display:'flex',gap:8,alignItems:'center',marginTop:6}}>
+                      <button className="btn sm" disabled={!pasteText.trim() || splitting}
+                        onClick={applyPastedRanges}>이 표로 구간 정하기</button>
+                      {audioRanges && (
+                        <button className="btn ghost sm" disabled={splitting}
+                          onClick={()=>{ setAudioRanges(null); setPasteError(''); }}>
+                          되돌리기 (자동 분할로)
+                        </button>
+                      )}
+                    </div>
+                    {pasteError && <div role="alert" style={{marginTop:6,color:'#c8392b'}}>{pasteError}</div>}
+                  </details>
+                </div>
                 <SplitReview
                   blocks={blocks}
                   segments={phase.segments}
