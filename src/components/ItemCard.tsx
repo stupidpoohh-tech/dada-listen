@@ -14,6 +14,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Ic, fmt } from './icons';
 import { getMediaUrl, getStudentMediaUrl, listSegments } from '../lib/store';
+import { claimSound, releaseSound } from '../lib/soundLock';
 import { LEVELS, normalize, selectGaps, tokenize } from '../lib/gapfill';
 import type { GapRef, Level } from '../lib/gapfill';
 import type { Folder, Item, Segment } from '../lib/types';
@@ -94,6 +95,20 @@ export default function ItemCard({ item, folder, statusLabel, onDelete, deleting
   useEffect(() => {
     if (mediaRef.current) mediaRef.current.playbackRate = rate;
   }, [rate, url]);
+
+  /* 카드를 접으면 재생기가 사라진다. 그런데 상태는 남아서, 버튼이 계속
+   * "일시정지"로 보이고 문장 반복도 켜진 채였다. 다시 펴고 ▶ 를 누르면
+   * 문항 처음이 아니라 그 문장이 나온다 — 다른 구간이 재생되는 것처럼 보인다.
+   * 접을 때 같이 정리한다. */
+  useEffect(() => {
+    if (open) return;
+    const el = mediaRef.current;
+    if (el) el.pause();
+    releaseSound(el);
+    setPlaying(false);
+    setRepeat(null);
+    setAutoplay(false);
+  }, [open]);
 
   /* 문항별로 나눈 아이템은 원본 음원의 한 구간만 쓴다 (0006_item_clips.sql).
    * 오디오를 자르지 않았으므로, 재생기가 구간 밖으로 나가지 않게 막는다. */
@@ -213,8 +228,8 @@ export default function ItemCard({ item, folder, statusLabel, onDelete, deleting
               preload="metadata"
               style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
               src={url ?? undefined}
-              onPlay={() => setPlaying(true)}
-              onPause={() => setPlaying(false)}
+              onPlay={(e) => { claimSound(e.currentTarget); setPlaying(true); }}
+              onPause={(e) => { releaseSound(e.currentTarget); setPlaying(false); }}
               onEnded={() => setPlaying(false)}
               onTimeUpdate={onTime}
               onLoadedMetadata={(e) => {
@@ -222,7 +237,10 @@ export default function ItemCard({ item, folder, statusLabel, onDelete, deleting
                 if (Number.isFinite(el.duration)) setMediaDur(el.duration);
                 el.playbackRate = rate;
                 // 구간 아이템은 파일 처음이 아니라 자기 구간에서 시작한다.
-                if (clipStart > 0 && el.currentTime < clipStart) {
+                // 구간 밖이면 어디에 있든 구간 처음으로. 브라우저가 지난
+                // 위치를 복원해 둘 때가 있어서 "앞보다 작을 때"만으로는 모자라다.
+                const end = item.clipEndSec;
+                if (el.currentTime < clipStart || (end !== null && el.currentTime >= end)) {
                   el.currentTime = clipStart;
                   setCur(clipStart);
                 }
